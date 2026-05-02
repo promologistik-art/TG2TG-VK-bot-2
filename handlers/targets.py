@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 async def resolve_vk_group(token: str, query: str) -> tuple:
     """Определяет ID группы VK по ссылке или короткому имени."""
     
-    # Если прислали чистые цифры — это уже ID
     if query.isdigit():
         group_id = int(query)
         try:
@@ -38,7 +37,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
             return (None, f"Ошибка: {str(e)[:80]}")
         return (group_id, f"VK Group {group_id}")
     
-    # Извлекаем короткое имя из ссылки
     screen_name = None
     patterns = [
         r'(?:https?://)?vk\.(?:com|ru)/([a-zA-Z0-9_.]+)',
@@ -149,18 +147,34 @@ async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif platform == "vk":
         await query.edit_message_text(
             f"🔵 <b>Добавление VK-сообщества</b>\n\n"
-            f"<b>Шаг 1 из 2:</b> Отправьте ключ доступа сообщества VK.\n\n"
-            f"<b>Как получить ключ:</b>\n"
-            f"1. Создайте сообщество (группу/паблик) в VK\n"
-            f"2. Перейдите: Управление → Дополнительно → Работа с API\n"
-            f"3. Нажмите «Создать ключ»\n"
-            f"4. Отметьте права: <b>wall, photos, video, groups</b>\n"
-            f"5. Подтвердите создание ключа\n"
-            f"6. Скопируйте ключ и отправьте его сюда\n\n"
-            f"🔐 <i>Ключ сохраняется только для этого проекта.</i>",
+            f"<b>Шаг 1 из 2:</b> Отправьте ссылку или ID сообщества VK.\n\n"
+            f"<b>Примеры:</b>\n"
+            f"• <code>https://vk.com/mychannel</code>\n"
+            f"• <code>https://vk.ru/mychannel</code>\n"
+            f"• <code>https://vkvideo.ru/@mychannel</code>\n"
+            f"• <code>public123456</code>\n"
+            f"• <code>123456</code>",
             parse_mode="HTML"
         )
-        return AWAITING_VK_TOKEN
+        return AWAITING_VK_GROUP
+
+
+async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query_text = update.message.text.strip()
+    context.user_data['temp_vk_group'] = query_text
+    
+    await update.message.reply_text(
+        f"🔵 <b>Шаг 2 из 2:</b> Отправьте ключ доступа сообщества VK.\n\n"
+        f"<b>Как получить ключ:</b>\n"
+        f"1. Создайте сообщество в VK\n"
+        f"2. Перейдите: Управление → Дополнительно → Работа с API\n"
+        f"3. Нажмите «Создать ключ»\n"
+        f"4. Отметьте права: <b>wall, photos, video, groups</b>\n"
+        f"5. Скопируйте ключ и отправьте его сюда\n\n"
+        f"🔐 <i>Ключ сохраняется только для этого проекта.</i>",
+        parse_mode="HTML"
+    )
+    return AWAITING_VK_TOKEN
 
 
 async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -170,61 +184,33 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Ключ слишком короткий. Отправьте полный ключ доступа.")
         return AWAITING_VK_TOKEN
     
-    context.user_data['temp_vk_token'] = token
-    
-    await update.message.reply_text(
-        f"🔵 <b>Шаг 2 из 2:</b> Отправьте ссылку или ID сообщества VK.\n\n"
-        f"<b>Примеры:</b>\n"
-        f"• <code>https://vk.com/mychannel</code>\n"
-        f"• <code>https://vk.ru/mychannel</code>\n"
-        f"• <code>https://vkvideo.ru/@mychannel</code>\n"
-        f"• <code>public123456</code>\n"
-        f"• <code>123456</code>\n\n"
-        f"🤖 Бот сам определит ID сообщества.",
-        parse_mode="HTML"
-    )
-    return AWAITING_VK_GROUP
-
-
-async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query_text = update.message.text.strip()
-    
+    query_text = context.user_data.get('temp_vk_group')
     project_id = context.user_data.get('temp_project_id')
     project_name = context.user_data.get('temp_project_name')
-    vk_token = context.user_data.get('temp_vk_token')
     
-    msg = await update.message.reply_text("🔍 Определяю ID сообщества...")
+    msg = await update.message.reply_text("🔍 Проверяю доступ к сообществу...")
     
     try:
-        group_id, result = await resolve_vk_group(vk_token, query_text)
+        group_id, result = await resolve_vk_group(token, query_text)
     except Exception as e:
         logger.error(f"resolve_vk_group failed for '{query_text}': {e}", exc_info=True)
         group_id = None
-        result = f"Ошибка при определении ID: {str(e)[:150]}"
+        result = f"Ошибка при проверке: {str(e)[:150]}"
     
     if group_id is None:
         await msg.edit_text(
             f"❌ {result}\n\n"
-            f"Попробуйте:\n"
-            f"• Открыть сообщество VK в браузере\n"
-            f"• Скопировать ссылку из адресной строки\n"
-            f"• Или отправьте ID цифрами: <code>123456</code>\n\n"
-            f"<b>Принимаются ссылки:</b>\n"
-            f"• <code>vk.com/mychannel</code>\n"
-            f"• <code>vk.ru/mychannel</code>\n"
-            f"• <code>vkvideo.ru/@mychannel</code>"
+            f"Проверьте ссылку и ключ, попробуйте снова.\n"
+            f"Отправьте ключ ещё раз:"
         )
-        return AWAITING_VK_GROUP
+        return AWAITING_VK_TOKEN
     
     group_name = result
     
     async with AsyncSessionLocal() as session:
         channel = TargetChannel(
-            project_id=project_id,
-            platform="vk",
-            vk_token=vk_token,
-            vk_group_id=group_id,
-            vk_group_name=group_name
+            project_id=project_id, platform="vk",
+            vk_token=token, vk_group_id=group_id, vk_group_name=group_name
         )
         session.add(channel)
         await session.commit()
@@ -234,12 +220,11 @@ async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ <b>VK-сообщество добавлено!</b>\n\n"
         f"📝 Название: <b>{group_name}</b>\n"
         f"🆔 ID: <code>{group_id}</code>\n"
-        f"🔐 Ключ доступа сохранён\n\n"
-        f"💡 Теперь добавьте источники через /add_source\n"
-        f"Бот будет парсить каналы и публиковать посты в это сообщество VK."
+        f"🔐 Ключ сохранён\n\n"
+        f"💡 Теперь добавьте источники через /add_source"
     )
     
-    for key in ['temp_project_id', 'temp_project_name', 'temp_platform', 'temp_vk_token']:
+    for key in ['temp_project_id', 'temp_project_name', 'temp_platform', 'temp_vk_group']:
         context.user_data.pop(key, None)
     
     sources_count = await get_sources_count(project_id)
