@@ -97,9 +97,9 @@ async def main():
         entry_points=[CommandHandler("add_target", add_target_start)],
         states={
             AWAITING_TARGET_PLATFORM: [CallbackQueryHandler(add_target_platform, pattern="^platform_")],
-            AWAITING_TARGET_FORWARD: [MessageHandler(filters.FORWARDED, add_target_forward)],
-            AWAITING_VK_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target_vk_token)],
             AWAITING_VK_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target_vk_group)],
+            AWAITING_VK_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target_vk_token)],
+            AWAITING_TARGET_FORWARD: [MessageHandler(filters.FORWARDED, add_target_forward)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]
     )
