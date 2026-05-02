@@ -13,10 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 async def resolve_vk_group(token: str, query: str) -> tuple:
-    """
-    Определяет ID группы VK по ссылке или короткому имени.
-    Возвращает (group_id, group_name) или (None, error_message).
-    """
+    """Определяет ID группы VK по ссылке или короткому имени."""
+    
     # Если прислали чистые цифры — это уже ID
     if query.isdigit():
         group_id = int(query)
@@ -29,7 +27,7 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
                         logger.warning(f"VK API error for ID {group_id}: {error_msg}")
                         return (group_id, f"VK Group {group_id}")
-                    if data.get("response"):
+                    if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
                         group_info = data["response"][0]
                         return (group_id, group_info.get("name", f"VK Group {group_id}"))
         except aiohttp.ClientError as e:
@@ -53,7 +51,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
         match = re.search(pattern, query.strip())
         if match:
             screen_name = match.group(1)
-            # Убираем служебные имена VK
             if screen_name.lower() in ['public', 'club', 'event', 'feed', 'im', 'id', 'dev', 'api', 'support', 'help']:
                 continue
             break
@@ -61,7 +58,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
     if not screen_name:
         return (None, "Не удалось распознать ссылку. Отправьте ссылку вида vk.com/mychannel или ID.")
     
-    # Ищем группу по короткому имени через API
     try:
         params = {"access_token": token, "v": "5.199", "group_id": screen_name, "fields": "name"}
         async with aiohttp.ClientSession() as session:
@@ -71,11 +67,11 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                 if "error" in data:
                     error_code = data["error"].get("error_code", 0)
                     if error_code == 100:
-                        return (None, f"Сообщество «{screen_name}» не найдено. Проверьте правильность ссылки.")
+                        return (None, f"Сообщество «{screen_name}» не найдено. Проверьте ссылку.")
                     elif error_code == 15:
-                        return (None, f"Сообщество «{screen_name}» недоступно (закрыто).")
+                        return (None, f"Сообщество «{screen_name}» недоступно.")
                     elif error_code == 5:
-                        return (None, "Ключ доступа недействителен. Проверьте ключ и попробуйте снова.")
+                        return (None, "Ключ доступа недействителен. Проверьте ключ.")
                     elif error_code == 6:
                         return (None, "Слишком много запросов. Попробуйте через минуту.")
                     else:
@@ -83,7 +79,7 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         logger.warning(f"VK API error: [{error_code}] {error_msg}")
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
-                if data.get("response"):
+                if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
                     group_info = data["response"][0]
                     group_id = group_info.get("id", 0)
                     group_name = group_info.get("name", screen_name)
@@ -100,7 +96,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
 
 
 async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 0: Выбор платформы."""
     project = await require_project(update, context)
     if not project:
         return ConversationHandler.END
@@ -125,7 +120,7 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"📤 <b>Добавление цели в «{project.name}»</b>\n\n"
-        f"Выберите платформу для публикации:",
+        f"Выберите платформу:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -133,7 +128,6 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора платформы."""
     query = update.callback_query
     await query.answer()
     
@@ -163,22 +157,17 @@ async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"4. Отметьте права: <b>wall, photos, video, groups</b>\n"
             f"5. Подтвердите создание ключа\n"
             f"6. Скопируйте ключ и отправьте его сюда\n\n"
-            f"🔐 <i>Ключ сохраняется только для этого проекта.\n"
-            f"Не передавайте ключ третьим лицам.</i>",
+            f"🔐 <i>Ключ сохраняется только для этого проекта.</i>",
             parse_mode="HTML"
         )
         return AWAITING_VK_TOKEN
 
 
 async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получение ключа доступа VK."""
     token = update.message.text.strip()
     
     if len(token) < 20:
-        await update.message.reply_text(
-            "❌ Ключ слишком короткий.\n"
-            "Отправьте полный ключ доступа сообщества из настроек VK."
-        )
+        await update.message.reply_text("❌ Ключ слишком короткий. Отправьте полный ключ доступа.")
         return AWAITING_VK_TOKEN
     
     context.user_data['temp_vk_token'] = token
@@ -198,7 +187,6 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение VK-цели с автоопределением ID."""
     query_text = update.message.text.strip()
     
     project_id = context.user_data.get('temp_project_id')
@@ -262,14 +250,10 @@ async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def add_target_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавление Telegram-канала через пересланное сообщение."""
     msg = update.message
     
     if not msg.forward_from_chat or msg.forward_from_chat.type != 'channel':
-        await update.message.reply_text(
-            "❌ Это не пересланное сообщение из канала.\n"
-            "Перешлите любое сообщение из целевого Telegram-канала."
-        )
+        await update.message.reply_text("❌ Перешлите сообщение из канала.")
         return AWAITING_TARGET_FORWARD
     
     chat = msg.forward_from_chat
@@ -277,29 +261,19 @@ async def add_target_forward(update: Update, context: ContextTypes.DEFAULT_TYPE)
     project_name = context.user_data.get('temp_project_name')
     
     try:
-        test_msg = await context.bot.send_message(chat.id, "🔧 Проверка прав доступа...")
+        test_msg = await context.bot.send_message(chat.id, "🔧 Проверка прав...")
         await test_msg.delete()
-    except Exception as e:
-        logger.error(f"Bot permission check failed: {e}")
-        await update.message.reply_text(
-            "❌ Бот не имеет прав администратора в этом канале.\n\n"
-            "Убедитесь, что:\n"
-            "• Бот добавлен в администраторы канала\n"
-            "• У бота есть право публиковать сообщения"
-        )
+    except:
+        await update.message.reply_text("❌ Бот не имеет прав администратора.")
         return AWAITING_TARGET_FORWARD
     
     async with AsyncSessionLocal() as session:
         channel = TargetChannel(
-            project_id=project_id,
-            platform="telegram",
-            channel_id=chat.id,
-            channel_username=chat.username,
-            channel_title=chat.title
+            project_id=project_id, platform="telegram",
+            channel_id=chat.id, channel_username=chat.username, channel_title=chat.title
         )
         session.add(channel)
         await session.commit()
-        logger.info(f"Added Telegram target: {chat.title} (ID: {chat.id})")
     
     await update.message.reply_text(
         f"✅ Канал «{chat.title}» добавлен!\n\n"
@@ -317,58 +291,31 @@ async def add_target_forward(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def my_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать цель проекта."""
     project = await require_project(update, context)
     if not project:
         return
     
     target = await get_project_target(project.id)
-    
     if not target:
-        await update.message.reply_text(
-            f"📭 В проекте «{project.name}» нет цели.\n"
-            f"Добавьте через /add_target"
-        )
+        await update.message.reply_text(f"📭 В проекте «{project.name}» нет цели.\nДобавьте: /add_target")
         return
     
     text = f"🎯 <b>Цель проекта «{project.name}»</b>\n\n"
     
     if target.platform == "telegram":
-        text += f"🟢 <b>Платформа:</b> Telegram\n"
-        text += f"📝 <b>Канал:</b> {target.channel_title}\n"
-        if target.channel_username:
-            text += f"🔗 @{target.channel_username}\n"
-        text += f"🆔 <code>{target.channel_id}</code>\n"
-        if target.last_posted:
-            text += f"📤 Последняя публикация: {target.last_posted.strftime('%d.%m.%Y %H:%M')}\n"
-    
+        text += f"🟢 <b>Telegram</b>\n📝 {target.channel_title}\n"
     elif target.platform == "vk":
-        text += f"🔵 <b>Платформа:</b> VK\n"
-        text += f"📝 <b>Сообщество:</b> {target.vk_group_name or 'Группа VK'}\n"
-        text += f"🆔 <code>{target.vk_group_id}</code>\n"
-        text += f"🔐 Ключ: {'установлен' if target.vk_token else 'не установлен'}\n"
-        if target.last_posted:
-            text += f"📤 Последняя публикация: {target.last_posted.strftime('%d.%m.%Y %H:%M')}\n"
+        text += f"🔵 <b>VK</b>\n📝 {target.vk_group_name or 'Группа VK'}\n"
     
     keyboard = [[InlineKeyboardButton("❌ Удалить цель", callback_data=f"del_target_{target.id}")]]
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 async def delete_target_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удалить цель."""
     query = update.callback_query
     await query.answer()
-    
     target_id = int(query.data.replace("del_target_", ""))
-    
     async with AsyncSessionLocal() as session:
         await session.execute(delete(TargetChannel).where(TargetChannel.id == target_id))
         await session.commit()
-        logger.info(f"Deleted target {target_id}")
-    
     await query.edit_message_text("✅ Цель удалена")
