@@ -23,10 +23,14 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                 async with session.get("https://api.vk.com/method/groups.getById", params=params) as resp:
                     data = await resp.json()
                     if "error" in data:
-                        error_msg = data["error"].get("error_msg", "неизвестная ошибка")
                         return (group_id, f"VK Group {group_id}")
-                    if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
-                        group_info = data["response"][0]
+                    
+                    resp_data = data.get("response", {})
+                    if isinstance(resp_data, list) and len(resp_data) > 0:
+                        group_info = resp_data[0]
+                        return (group_id, group_info.get("name", f"VK Group {group_id}"))
+                    elif isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
+                        group_info = resp_data["groups"][0]
                         return (group_id, group_info.get("name", f"VK Group {group_id}"))
         except aiohttp.ClientError as e:
             logger.error(f"VK API request failed: {e}")
@@ -73,13 +77,18 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
-                if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
-                    group_info = data["response"][0]
-                    group_id = group_info.get("id", 0)
-                    group_name = group_info.get("name", screen_name)
-                    return (group_id, group_name)
+                # Ответ может быть списком или объектом с ключом groups
+                resp_data = data.get("response", {})
+                if isinstance(resp_data, list) and len(resp_data) > 0:
+                    group_info = resp_data[0]
+                elif isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
+                    group_info = resp_data["groups"][0]
+                else:
+                    return (None, f"Сообщество «{screen_name}» не найдено.")
                 
-                return (None, f"Сообщество «{screen_name}» не найдено.")
+                group_id = group_info.get("id", 0)
+                group_name = group_info.get("name", screen_name)
+                return (group_id, group_name)
                 
     except aiohttp.ClientError as e:
         logger.error(f"VK API request failed: {e}")
@@ -90,7 +99,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
 
 
 async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Очищаем старые диалоги
     context.user_data.clear()
     
     project = await require_project(update, context)
@@ -179,7 +187,7 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
     token = update.message.text.strip()
     
     if len(token) < 20:
-        await update.message.reply_text("❌ Ключ слишком короткий. Отправьте полный ключ доступа.")
+        await update.message.reply_text("❌ Ключ слишком короткий.")
         return AWAITING_VK_TOKEN
     
     query_text = context.user_data.get('temp_vk_group')
