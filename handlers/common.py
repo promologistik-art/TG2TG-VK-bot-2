@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Очищаем все предыдущие диалоги
+    context.user_data.clear()
+    
     user = update.effective_user
     is_new_user = False
     
@@ -47,6 +50,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db_user.subscription_active = True
                 db_user.max_projects = 999
                 db_user.max_sources_per_project = 999
+                db_user.min_post_interval_minutes = 1
+                db_user.min_check_interval_minutes = 5
+                db_user.trial_ends_at = datetime.utcnow() + timedelta(days=36500)
             await session.commit()
         
         result = await session.execute(select(func.count()).select_from(Project).where(Project.user_id == user.id))

@@ -55,7 +55,6 @@ async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_icon = "👉 " if current_project and p.id == current_project.id else ""
         status_icon = "✅" if p.is_active else "❌"
         
-        # Безопасное получение имени цели
         target_name = 'не задана'
         if target:
             if target.platform == 'telegram':
