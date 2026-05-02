@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Очищаем старые диалоги
+    context.user_data.clear()
+    
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
     

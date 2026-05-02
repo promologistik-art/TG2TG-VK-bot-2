@@ -24,16 +24,15 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                     data = await resp.json()
                     if "error" in data:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
-                        logger.warning(f"VK API error for ID {group_id}: {error_msg}")
                         return (group_id, f"VK Group {group_id}")
                     if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
                         group_info = data["response"][0]
                         return (group_id, group_info.get("name", f"VK Group {group_id}"))
         except aiohttp.ClientError as e:
-            logger.error(f"VK API request failed for ID {group_id}: {e}")
-            return (None, f"Ошибка соединения с VK: {str(e)[:80]}")
+            logger.error(f"VK API request failed: {e}")
+            return (None, f"Ошибка соединения: {str(e)[:80]}")
         except Exception as e:
-            logger.error(f"Unexpected error for ID {group_id}: {e}", exc_info=True)
+            logger.error(f"Unexpected error: {e}", exc_info=True)
             return (None, f"Ошибка: {str(e)[:80]}")
         return (group_id, f"VK Group {group_id}")
     
@@ -65,16 +64,13 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                 if "error" in data:
                     error_code = data["error"].get("error_code", 0)
                     if error_code == 100:
-                        return (None, f"Сообщество «{screen_name}» не найдено. Проверьте ссылку.")
+                        return (None, f"Сообщество «{screen_name}» не найдено.")
                     elif error_code == 15:
                         return (None, f"Сообщество «{screen_name}» недоступно.")
                     elif error_code == 5:
-                        return (None, "Ключ доступа недействителен. Проверьте ключ.")
-                    elif error_code == 6:
-                        return (None, "Слишком много запросов. Попробуйте через минуту.")
+                        return (None, "Ключ доступа недействителен.")
                     else:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
-                        logger.warning(f"VK API error: [{error_code}] {error_msg}")
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
                 if data.get("response") and isinstance(data["response"], list) and len(data["response"]) > 0:
@@ -87,13 +83,16 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                 
     except aiohttp.ClientError as e:
         logger.error(f"VK API request failed: {e}")
-        return (None, "Ошибка соединения с VK API. Попробуйте позже.")
+        return (None, "Ошибка соединения с VK API.")
     except Exception as e:
-        logger.error(f"Unexpected error resolving VK group: {e}", exc_info=True)
+        logger.error(f"Unexpected error: {e}", exc_info=True)
         return (None, f"Ошибка: {str(e)[:100]}")
 
 
 async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Очищаем старые диалоги
+    context.user_data.clear()
+    
     project = await require_project(update, context)
     if not project:
         return ConversationHandler.END
@@ -137,9 +136,8 @@ async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             f"🟢 <b>Добавление Telegram-канала</b>\n\n"
             f"1. Добавьте @{me.username} в администраторы канала\n"
-            f"2. Выдайте боту права на публикацию сообщений\n"
-            f"3. Перешлите сюда любое сообщение из этого канала\n\n"
-            f"⚠️ Пересылать нужно именно из канала, не из избранного.",
+            f"2. Выдайте боту права на публикацию\n"
+            f"3. Перешлите сюда любое сообщение из этого канала",
             parse_mode="HTML"
         )
         return AWAITING_TARGET_FORWARD
@@ -193,15 +191,13 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         group_id, result = await resolve_vk_group(token, query_text)
     except Exception as e:
-        logger.error(f"resolve_vk_group failed for '{query_text}': {e}", exc_info=True)
+        logger.error(f"resolve_vk_group failed: {e}", exc_info=True)
         group_id = None
-        result = f"Ошибка при проверке: {str(e)[:150]}"
+        result = f"Ошибка: {str(e)[:150]}"
     
     if group_id is None:
         await msg.edit_text(
-            f"❌ {result}\n\n"
-            f"Проверьте ссылку и ключ, попробуйте снова.\n"
-            f"Отправьте ключ ещё раз:"
+            f"❌ {result}\n\nПроверьте ссылку и ключ, попробуйте снова.\nОтправьте ключ ещё раз:"
         )
         return AWAITING_VK_TOKEN
     
@@ -214,7 +210,7 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         session.add(channel)
         await session.commit()
-        logger.info(f"Added VK target: {group_name} (ID: {group_id}) to project {project_id}")
+        logger.info(f"Added VK target: {group_name} (ID: {group_id})")
     
     await msg.edit_text(
         f"✅ <b>VK-сообщество добавлено!</b>\n\n"
