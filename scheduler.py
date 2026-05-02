@@ -1,0 +1,290 @@
+import asyncio
+import logging
+import os
+import uuid
+from datetime import datetime, timedelta
+from sqlalchemy import select, update
+from database import AsyncSessionLocal, is_post_parsed, mark_post_parsed
+from models import User, Project, SourceChannel, TargetChannel, PostQueue
+from scrapers import TelegramScraper
+from posters import TelegramPoster
+from utils import calculate_score, get_moscow_time
+from config import Config
+
+logger = logging.getLogger(__name__)
+
+
+class Scheduler:
+    def __init__(self, poster: TelegramPoster):
+        self.poster = poster
+        self._running = False
+        self._tasks = {}
+        self._last_daily_report = None
+        self._last_check = {}
+
+    async def start(self):
+        self._running = True
+        logger.info("🟢 Scheduler started")
+        
+        while self._running:
+            try:
+                await self._check_projects()
+                await self._check_daily_tasks()
+                await asyncio.sleep(60)
+            except Exception as e:
+                logger.error(f"Scheduler error: {e}")
+                await asyncio.sleep(60)
+
+    async def _check_daily_tasks(self):
+        now = get_moscow_time()
+        if now.hour == 9 and now.minute == 0:
+            today = now.date()
+            if self._last_daily_report != today:
+                self._last_daily_report = today
+                await self._send_daily_report()
+
+    async def _send_daily_report(self):
+        try:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(User).order_by(User.created_at.desc()))
+                users = result.scalars().all()
+            now = datetime.utcnow()
+            from telegram import Bot
+            bot = Bot(token=Config.BOT_TOKEN)
+            await bot.send_message(chat_id=Config.ADMIN_ID, text=f"📊 Отчёт\n📅 {now.strftime('%d.%m.%Y')}\n👥 Всего: {len(users)}")
+        except Exception as e:
+            logger.error(f"Daily report failed: {e}")
+
+    async def _check_projects(self):
+        now = datetime.utcnow()
+        
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Project).where(Project.is_active == True))
+            projects = result.scalars().all()
+        
+        for project in projects:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(User).where(User.telegram_id == project.user_id))
+                user = result.scalar_one_or_none()
+                if not user:
+                    continue
+                
+                if not user.is_admin:
+                    has_access = False
+                    if user.subscription_active and user.subscription_ends_at and user.subscription_ends_at > now:
+                        has_access = True
+                    elif user.trial_ends_at and user.trial_ends_at > now:
+                        has_access = True
+                    if not has_access:
+                        continue
+                
+                interval = project.check_interval_minutes
+                if not user.is_admin:
+                    interval = max(interval, user.min_check_interval_minutes)
+                
+                last_check = self._last_check.get(project.id)
+                if last_check:
+                    elapsed = (now - last_check).total_seconds() / 60
+                    if elapsed < interval:
+                        continue
+                
+                self._last_check[project.id] = now
+                
+                task_key = f"project_{project.id}"
+                if task_key not in self._tasks or self._tasks[task_key].done():
+                    task = asyncio.create_task(self._process_project(project))
+                    self._tasks[task_key] = task
+                    logger.info(f"⏰ Project '{project.name}' (ID: {project.id}) scheduled")
+
+    async def _process_project(self, project: Project):
+        logger.info(f"🔍 Processing project '{project.name}' (ID: {project.id})")
+        
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(User).where(User.telegram_id == project.user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                return
+            
+            if not user.is_admin:
+                has_access = False
+                now = datetime.utcnow()
+                if user.subscription_active and user.subscription_ends_at and user.subscription_ends_at > now:
+                    has_access = True
+                elif user.trial_ends_at and user.trial_ends_at > now:
+                    has_access = True
+                if not has_access:
+                    return
+        
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SourceChannel).where(SourceChannel.project_id == project.id, SourceChannel.is_active == True)
+            )
+            sources = result.scalars().all()
+            
+            result = await session.execute(
+                select(TargetChannel).where(TargetChannel.project_id == project.id, TargetChannel.is_active == True)
+            )
+            target = result.scalar_one_or_none()
+        
+        if not sources or not target:
+            logger.warning(f"⚠️ Project '{project.name}' has no sources or target")
+            return
+        
+        logger.info(f"📊 Project '{project.name}': {len(sources)} sources → {target.channel_title or target.vk_group_name}")
+        
+        posts_to_publish = []
+        total_parsed = 0
+        skipped_ads = 0
+        
+        async with TelegramScraper() as scraper:
+            for source in sources:
+                logger.info(f"📡 Fetching @{source.channel_username}")
+                
+                try:
+                    posts = await scraper.get_posts(source.channel_username, limit=100)
+                    logger.info(f"📨 @{source.channel_username}: {len(posts)} posts fetched")
+                except Exception as e:
+                    logger.error(f"❌ Failed to fetch @{source.channel_username}: {e}")
+                    continue
+                
+                best_post = None
+                best_score = -1
+                
+                for post in posts:
+                    if await is_post_parsed(project.id, post["url"]):
+                        continue
+                    
+                    # Фильтр по типу медиа
+                    if source.media_filter == "photo_only":
+                        if not post.get("has_media") or post.get("media_type") != "photo":
+                            continue
+                    if source.media_filter == "video_only":
+                        if not post.get("has_media") or post.get("media_type") != "video":
+                            continue
+                    
+                    if post.get("is_advertisement", False):
+                        skipped_ads += 1
+                        continue
+                    
+                    post["source_username"] = source.channel_username
+                    post["source_title"] = source.channel_title
+                    post["media_filter"] = source.media_filter
+                    post["remove_original_text"] = source.remove_original_text
+                    post["max_video_duration"] = source.max_video_duration
+                    
+                    post_time = datetime.utcnow()
+                    if post.get("datetime"):
+                        try:
+                            post_time = datetime.fromisoformat(post["datetime"].replace("Z", "+00:00"))
+                        except:
+                            pass
+                    
+                    score, is_fallback = calculate_score(post, source.criteria, post_time)
+                    
+                    if is_fallback:
+                        continue
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_post = post
+                
+                if best_post:
+                    has_text = bool(best_post.get("text", "").strip())
+                    has_media = best_post.get("has_media") and best_post.get("media_url")
+                    
+                    if not has_text and not has_media:
+                        continue
+                    
+                    if source.remove_original_text and not has_media:
+                        continue
+                    
+                    logger.info(f"🏆 Selected from @{source.channel_username}: score={best_score}")
+                    
+                    await mark_post_parsed(project.id, source.id, best_post["url"])
+                    total_parsed += 1
+                    
+                    if best_post.get("has_media") and best_post.get("media_url"):
+                        ext = "jpg" if best_post.get("media_type") == "photo" else "mp4"
+                        filename = f"{uuid.uuid4()}.{ext}"
+                        media_path = os.path.join(Config.TEMP_DIR, filename)
+                        
+                        if await scraper.download_media(best_post["media_url"], media_path):
+                            best_post["media_path"] = media_path
+                        else:
+                            if source.remove_original_text:
+                                continue
+                    
+                    posts_to_publish.append(best_post)
+                    
+                    async with AsyncSessionLocal() as session:
+                        await session.execute(
+                            update(SourceChannel)
+                            .where(SourceChannel.id == source.id)
+                            .values(last_parsed=datetime.utcnow(), last_post_url=best_post["url"])
+                        )
+                        await session.commit()
+        
+        if posts_to_publish:
+            logger.info(f"📤 Found {len(posts_to_publish)} posts")
+            
+            current_time = get_moscow_time().replace(tzinfo=None)
+            
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(PostQueue).where(PostQueue.project_id == project.id).order_by(PostQueue.scheduled_time.desc()).limit(1)
+                )
+                last_queued = result.scalar_one_or_none()
+            
+            if last_queued:
+                last_time_msk = last_queued.scheduled_time + timedelta(hours=3)
+                next_time = last_time_msk if last_time_msk > current_time else current_time
+            else:
+                next_time = current_time
+            
+            interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
+            
+            # Округляем время до ближайшего слота
+            if project.active_hours_start > 0:
+                start_total = project.active_hours_start * 60
+                current_total = next_time.hour * 60 + next_time.minute
+                if current_total >= start_total:
+                    slots = (current_total - start_total) // interval_minutes
+                    next_time = next_time.replace(hour=project.active_hours_start, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+                    if next_time < current_time:
+                        next_time = next_time + timedelta(minutes=interval_minutes)
+                else:
+                    next_time = next_time.replace(hour=project.active_hours_start, minute=0, second=0, microsecond=0)
+            
+            for i, post in enumerate(posts_to_publish):
+                if i > 0:
+                    next_time = next_time + timedelta(minutes=interval_minutes)
+                
+                utc_time = next_time - timedelta(hours=3)
+                
+                await self.poster.add_to_queue(
+                    project_id=project.id,
+                    target_channel_id=target.id,
+                    post_data=post,
+                    scheduled_time=utc_time
+                )
+                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK")
+            
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(Project).where(Project.id == project.id))
+                db_project = result.scalar_one()
+                today = datetime.utcnow().date()
+                if db_project.last_reset.date() < today:
+                    db_project.posts_parsed_today = 0
+                    db_project.posts_posted_today = 0
+                    db_project.last_reset = datetime.utcnow()
+                db_project.posts_parsed_today += total_parsed
+                await session.commit()
+        
+        logger.info(f"✅ Project '{project.name}' processing completed")
+
+    async def stop(self):
+        self._running = False
+        for task_key, task in self._tasks.items():
+            if not task.done():
+                task.cancel()
+        logger.info("🔴 Scheduler stopped")
