@@ -25,12 +25,14 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                     if "error" in data:
                         return (group_id, f"VK Group {group_id}")
                     resp_data = data.get("response", {})
-                    if isinstance(resp_data, list) and len(resp_data) > 0:
-                        group_info = resp_data[0]
-                        return (group_id, group_info.get("name", f"VK Group {group_id}"))
-                    elif isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
+                    # Сначала проверяем словарь с groups, потом список
+                    if isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
                         group_info = resp_data["groups"][0]
-                        return (group_id, group_info.get("name", f"VK Group {group_id}"))
+                    elif isinstance(resp_data, list) and len(resp_data) > 0:
+                        group_info = resp_data[0]
+                    else:
+                        return (group_id, f"VK Group {group_id}")
+                    return (group_id, group_info.get("name", f"VK Group {group_id}"))
         except aiohttp.ClientError as e:
             logger.error(f"VK API request failed: {e}")
             return (None, f"Ошибка соединения: {str(e)[:80]}")
@@ -77,10 +79,11 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
                 resp_data = data.get("response", {})
-                if isinstance(resp_data, list) and len(resp_data) > 0:
-                    group_info = resp_data[0]
-                elif isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
+                # Сначала проверяем словарь с groups, потом список
+                if isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
                     group_info = resp_data["groups"][0]
+                elif isinstance(resp_data, list) and len(resp_data) > 0:
+                    group_info = resp_data[0]
                 else:
                     return (None, f"Сообщество «{screen_name}» не найдено.")
                 
@@ -195,7 +198,6 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     msg = await update.message.reply_text("🔍 Проверяю доступ к сообществу...")
     
-    # Проверяем токен через groups.getById (а не users.get)
     try:
         group_id, result = await resolve_vk_group(token, query_text)
     except Exception as e:
