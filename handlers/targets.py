@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 async def resolve_vk_group(token: str, query: str) -> tuple:
+    """Определяет ID группы VK по ссылке или короткому имени."""
+    
     if query.isdigit():
         group_id = int(query)
         try:
@@ -69,7 +71,7 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                     elif error_code == 15:
                         return (None, f"Сообщество «{screen_name}» недоступно.")
                     elif error_code == 5:
-                        return (None, "Ключ доступа недействителен.")
+                        return (None, "Ключ доступа недействителен. Проверьте ключ.")
                     else:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
                         return (None, f"Ошибка VK: {error_msg[:100]}")
@@ -173,6 +175,7 @@ async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"3. Нажмите «Создать ключ»\n"
         f"4. Отметьте права: wall, photos, video, groups\n"
         f"5. Скопируйте ключ и отправьте его сюда\n\n"
+        f"Или отправьте пользовательский токен, полученный через OAuth.\n\n"
         f"Ключ сохраняется только для этого проекта.",
         parse_mode="HTML"
     )
@@ -183,7 +186,7 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
     token = update.message.text.strip()
     
     if len(token) < 20:
-        await update.message.reply_text("❌ Ключ слишком короткий.")
+        await update.message.reply_text("❌ Ключ слишком короткий. Отправьте полный ключ доступа.")
         return AWAITING_VK_TOKEN
     
     query_text = context.user_data.get('temp_vk_group')
@@ -192,15 +195,20 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     msg = await update.message.reply_text("🔍 Проверяю доступ к сообществу...")
     
+    # Проверяем токен через groups.getById (а не users.get)
     try:
         group_id, result = await resolve_vk_group(token, query_text)
     except Exception as e:
-        logger.error(f"resolve_vk_group failed: {e}", exc_info=True)
+        logger.error(f"resolve_vk_group failed for '{query_text}': {e}", exc_info=True)
         group_id = None
-        result = f"Ошибка: {str(e)[:150]}"
+        result = f"Ошибка при проверке: {str(e)[:150]}"
     
     if group_id is None:
-        await msg.edit_text(f"❌ {result}\n\nПроверьте ссылку и ключ, попробуйте снова.\nОтправьте ключ ещё раз:")
+        await msg.edit_text(
+            f"❌ {result}\n\n"
+            f"Проверьте ссылку и ключ, попробуйте снова.\n"
+            f"Отправьте ключ ещё раз:"
+        )
         return AWAITING_VK_TOKEN
     
     group_name = result
