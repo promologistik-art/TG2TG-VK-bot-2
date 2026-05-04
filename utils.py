@@ -51,12 +51,21 @@ def clean_caption(text: str) -> str:
     if not text:
         return ""
     
+    # Удаляем @упоминания
     text = re.sub(r'@\w+', '', text)
-    text = re.sub(r'(https?://)?t\.me/\S+', '', text)
+    # Удаляем t.me ссылки
+    text = re.sub(r'(?:https?://)?t\.me/\S+', '', text)
+    # Удаляем HTTP ссылки
     text = re.sub(r'https?://\S+', '', text)
+    # Удаляем HTML-теги
     text = re.sub(r'<[^>]+>', '', text)
+    # Удаляем конструкции вида "текст ссылка" (текст, за которым сразу следует ссылка)
+    text = re.sub(r'[^\s]+\[\.\.\.\]\s*https?://\S+', '', text)
+    # Сохраняем структуру переносов
     text = re.sub(r'\n\s*\n', '\n\n', text)
+    # Убираем множественные пробелы
     text = re.sub(r' +', ' ', text)
+    # Исправляем слипшиеся предложения
     text = re.sub(r'\.([А-ЯA-Z])', r'. \1', text)
     text = re.sub(r'\!([А-ЯA-Z])', r'! \1', text)
     text = re.sub(r'\?([А-ЯA-Z])', r'? \1', text)
