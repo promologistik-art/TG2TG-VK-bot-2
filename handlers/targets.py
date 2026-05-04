@@ -1,5 +1,6 @@
 import logging
 import re
+import json
 import aiohttp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
@@ -22,10 +23,10 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
             async with aiohttp.ClientSession() as session:
                 async with session.get("https://api.vk.com/method/groups.getById", params=params) as resp:
                     data = await resp.json()
+                    logger.info(f"VK API response for ID {group_id}: {json.dumps(data, ensure_ascii=False)[:500]}")
                     if "error" in data:
                         return (group_id, f"VK Group {group_id}")
                     resp_data = data.get("response", {})
-                    # Сначала проверяем словарь с groups, потом список
                     if isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
                         group_info = resp_data["groups"][0]
                     elif isinstance(resp_data, list) and len(resp_data) > 0:
@@ -65,6 +66,7 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
         async with aiohttp.ClientSession() as session:
             async with session.get("https://api.vk.com/method/groups.getById", params=params) as resp:
                 data = await resp.json()
+                logger.info(f"VK API response for {screen_name}: {json.dumps(data, ensure_ascii=False)[:500]}")
                 
                 if "error" in data:
                     error_code = data["error"].get("error_code", 0)
@@ -79,7 +81,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
                 resp_data = data.get("response", {})
-                # Сначала проверяем словарь с groups, потом список
                 if isinstance(resp_data, dict) and "groups" in resp_data and len(resp_data["groups"]) > 0:
                     group_info = resp_data["groups"][0]
                 elif isinstance(resp_data, list) and len(resp_data) > 0:
