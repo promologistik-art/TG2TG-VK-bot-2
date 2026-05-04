@@ -17,8 +17,7 @@ from handlers import (
     criteria_views_input, criteria_reactions_input,
     media_filter_callback, duration_callback, remove_text_callback,
     my_sources, delete_source_callback,
-    add_target_start, add_target_platform, add_target_forward,
-    add_target_vk_token, add_target_vk_group,
+    add_target_start, add_target_forward,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
     set_post_interval_start, set_post_interval_callback,
@@ -37,7 +36,6 @@ from handlers import (
     AWAITING_INTERVAL, AWAITING_VIEWS, AWAITING_REACTIONS, AWAITING_SIGNATURE,
     AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
-    AWAITING_TARGET_PLATFORM, AWAITING_VK_TOKEN, AWAITING_VK_GROUP,
     AWAITING_BROADCAST_MESSAGE
 )
 
@@ -96,9 +94,6 @@ async def main():
     add_target_conv = ConversationHandler(
         entry_points=[CommandHandler("add_target", add_target_start)],
         states={
-            AWAITING_TARGET_PLATFORM: [CallbackQueryHandler(add_target_platform, pattern="^platform_")],
-            AWAITING_VK_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target_vk_group)],
-            AWAITING_VK_TOKEN: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_target_vk_token)],
             AWAITING_TARGET_FORWARD: [MessageHandler(filters.FORWARDED, add_target_forward)],
         },
         fallbacks=[CommandHandler("cancel", cancel)]

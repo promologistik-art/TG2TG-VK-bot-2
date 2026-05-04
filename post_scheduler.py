@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import select
 from database import AsyncSessionLocal
 from models import PostQueue
-from posters import TelegramPoster, VKPoster
+from posters import TelegramPoster
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,6 @@ class PostScheduler:
     
     def __init__(self, telegram_poster: TelegramPoster):
         self.telegram_poster = telegram_poster
-        self.vk_poster = VKPoster()
         self._running = False
 
     async def start(self):
@@ -46,18 +45,12 @@ class PostScheduler:
         
         for queue_item in pending_items:
             try:
-                if queue_item.platform == "vk":
-                    success = await self.vk_poster.publish_post(queue_item)
-                else:
-                    success = await self.telegram_poster.publish_post(queue_item)
-                
+                success = await self.telegram_poster.publish_post(queue_item)
                 if success:
-                    logger.info(f"✅ Published post {queue_item.id} to {queue_item.platform}")
+                    logger.info(f"✅ Published post {queue_item.id}")
                 else:
                     logger.warning(f"❌ Failed to publish post {queue_item.id}")
-                
                 await asyncio.sleep(3)
-                
             except Exception as e:
                 logger.error(f"Error publishing post {queue_item.id}: {e}")
 
