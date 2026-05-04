@@ -16,19 +16,19 @@ class TelegramPoster:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def add_to_queue(self, project_id: int, target_channel_id: int, post_data: dict, scheduled_time: datetime):
+    async def add_to_queue(self, project_id: int, target_channel_id: int, post_data: dict, scheduled_time: datetime, platform: str = "telegram"):
         async with AsyncSessionLocal() as session:
             queue_item = PostQueue(
                 project_id=project_id,
                 target_channel_id=target_channel_id,
-                platform="telegram",
+                platform=platform,
                 post_data=post_data,
                 scheduled_time=scheduled_time,
                 status="pending"
             )
             session.add(queue_item)
             await session.commit()
-            logger.info(f"📨 Post queued for project {project_id}")
+            logger.info(f"📨 Post queued for project {project_id} ({platform})")
 
     async def publish_post(self, queue_item: PostQueue) -> bool:
         real_chat_id = None
@@ -43,6 +43,15 @@ class TelegramPoster:
                 if not target:
                     await self._mark_failed(queue_item, "Целевой канал не найден")
                     return False
+                
+                if target.platform == "vk":
+                    await self._mark_failed(queue_item, "Пост для VK, используйте VK постер")
+                    return False
+                
+                if not target.channel_id:
+                    await self._mark_failed(queue_item, "Chat ID не указан")
+                    return False
+                
                 real_chat_id = target.channel_id
                 
                 result = await session.execute(
@@ -95,23 +104,11 @@ class TelegramPoster:
             try:
                 with open(media_path, "rb") as f:
                     if media_type == "photo":
-                        await self.bot.send_photo(
-                            chat_id=real_chat_id, photo=f,
-                            caption=caption if caption else None,
-                            parse_mode=parse_mode
-                        )
+                        await self.bot.send_photo(chat_id=real_chat_id, photo=f, caption=caption if caption else None, parse_mode=parse_mode)
                     elif media_type == "video":
-                        await self.bot.send_video(
-                            chat_id=real_chat_id, video=f,
-                            caption=caption if caption else None,
-                            parse_mode=parse_mode
-                        )
+                        await self.bot.send_video(chat_id=real_chat_id, video=f, caption=caption if caption else None, parse_mode=parse_mode)
                     else:
-                        await self.bot.send_document(
-                            chat_id=real_chat_id, document=f,
-                            caption=caption if caption else None,
-                            parse_mode=parse_mode
-                        )
+                        await self.bot.send_document(chat_id=real_chat_id, document=f, caption=caption if caption else None, parse_mode=parse_mode)
                 
                 try:
                     os.remove(media_path)
@@ -177,33 +174,20 @@ class TelegramPoster:
 
     async def _mark_published(self, queue_item: PostQueue):
         async with AsyncSessionLocal() as session:
-            await session.execute(
-                update(PostQueue)
-                .where(PostQueue.id == queue_item.id)
-                .values(status="published", published_at=datetime.utcnow())
-            )
+            await session.execute(update(PostQueue).where(PostQueue.id == queue_item.id).values(status="published", published_at=datetime.utcnow()))
             published = PublishedPost(
-                project_id=queue_item.project_id,
-                target_channel_id=queue_item.target_channel_id,
+                project_id=queue_item.project_id, target_channel_id=queue_item.target_channel_id,
                 source_channel_username=queue_item.post_data.get("source_username", ""),
                 post_url=queue_item.post_data.get("url", ""),
                 post_data=queue_item.post_data
             )
             session.add(published)
-            await session.execute(
-                update(TargetChannel)
-                .where(TargetChannel.id == queue_item.target_channel_id)
-                .values(last_posted=datetime.utcnow())
-            )
+            await session.execute(update(TargetChannel).where(TargetChannel.id == queue_item.target_channel_id).values(last_posted=datetime.utcnow()))
             await session.commit()
 
     async def _mark_failed(self, queue_item: PostQueue, error_message: str):
         clean_error = error_message[:150].replace("\n", " ").strip()
         async with AsyncSessionLocal() as session:
-            await session.execute(
-                update(PostQueue)
-                .where(PostQueue.id == queue_item.id)
-                .values(status="failed", error_message=clean_error)
-            )
+            await session.execute(update(PostQueue).where(PostQueue.id == queue_item.id).values(status="failed", error_message=clean_error))
             await session.commit()
             logger.warning(f"❌ Post {queue_item.id} failed: {clean_error}")
