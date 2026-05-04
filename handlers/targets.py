@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 async def resolve_vk_group(token: str, query: str) -> tuple:
-    """Определяет ID группы VK по ссылке или короткому имени."""
-    
     if query.isdigit():
         group_id = int(query)
         try:
@@ -24,7 +22,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                     data = await resp.json()
                     if "error" in data:
                         return (group_id, f"VK Group {group_id}")
-                    
                     resp_data = data.get("response", {})
                     if isinstance(resp_data, list) and len(resp_data) > 0:
                         group_info = resp_data[0]
@@ -77,7 +74,6 @@ async def resolve_vk_group(token: str, query: str) -> tuple:
                         error_msg = data["error"].get("error_msg", "неизвестная ошибка")
                         return (None, f"Ошибка VK: {error_msg[:100]}")
                 
-                # Ответ может быть списком или объектом с ключом groups
                 resp_data = data.get("response", {})
                 if isinstance(resp_data, list) and len(resp_data) > 0:
                     group_info = resp_data[0]
@@ -124,7 +120,7 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(
-        f"📤 <b>Добавление цели в «{project.name}»</b>\n\n"
+        f"📤 Добавление цели в «{project.name}»\n\n"
         f"Выберите платформу:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
@@ -142,7 +138,7 @@ async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE
     if platform == "telegram":
         me = await context.bot.get_me()
         await query.edit_message_text(
-            f"🟢 <b>Добавление Telegram-канала</b>\n\n"
+            f"🟢 Добавление Telegram-канала\n\n"
             f"1. Добавьте @{me.username} в администраторы канала\n"
             f"2. Выдайте боту права на публикацию\n"
             f"3. Перешлите сюда любое сообщение из этого канала",
@@ -152,14 +148,14 @@ async def add_target_platform(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     elif platform == "vk":
         await query.edit_message_text(
-            f"🔵 <b>Добавление VK-сообщества</b>\n\n"
-            f"<b>Шаг 1 из 2:</b> Отправьте ссылку или ID сообщества VK.\n\n"
-            f"<b>Примеры:</b>\n"
-            f"• <code>https://vk.com/mychannel</code>\n"
-            f"• <code>https://vk.ru/mychannel</code>\n"
-            f"• <code>https://vkvideo.ru/@mychannel</code>\n"
-            f"• <code>public123456</code>\n"
-            f"• <code>123456</code>",
+            f"🔵 Добавление VK-сообщества\n\n"
+            f"Шаг 1 из 2: Отправьте ссылку или ID сообщества VK.\n\n"
+            f"Примеры:\n"
+            f"• vk.com/mychannel\n"
+            f"• vk.ru/mychannel\n"
+            f"• vkvideo.ru/@mychannel\n"
+            f"• public123456\n"
+            f"• 123456",
             parse_mode="HTML"
         )
         return AWAITING_VK_GROUP
@@ -170,14 +166,14 @@ async def add_target_vk_group(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data['temp_vk_group'] = query_text
     
     await update.message.reply_text(
-        f"🔵 <b>Шаг 2 из 2:</b> Отправьте ключ доступа сообщества VK.\n\n"
-        f"<b>Как получить ключ:</b>\n"
+        f"🔵 Шаг 2 из 2: Отправьте ключ доступа сообщества VK.\n\n"
+        f"Как получить ключ:\n"
         f"1. Создайте сообщество в VK\n"
         f"2. Перейдите: Управление → Дополнительно → Работа с API\n"
         f"3. Нажмите «Создать ключ»\n"
-        f"4. Отметьте права: <b>wall, photos, video, groups</b>\n"
+        f"4. Отметьте права: wall, photos, video, groups\n"
         f"5. Скопируйте ключ и отправьте его сюда\n\n"
-        f"🔐 <i>Ключ сохраняется только для этого проекта.</i>",
+        f"Ключ сохраняется только для этого проекта.",
         parse_mode="HTML"
     )
     return AWAITING_VK_TOKEN
@@ -204,9 +200,7 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
         result = f"Ошибка: {str(e)[:150]}"
     
     if group_id is None:
-        await msg.edit_text(
-            f"❌ {result}\n\nПроверьте ссылку и ключ, попробуйте снова.\nОтправьте ключ ещё раз:"
-        )
+        await msg.edit_text(f"❌ {result}\n\nПроверьте ссылку и ключ, попробуйте снова.\nОтправьте ключ ещё раз:")
         return AWAITING_VK_TOKEN
     
     group_name = result
@@ -221,11 +215,11 @@ async def add_target_vk_token(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Added VK target: {group_name} (ID: {group_id})")
     
     await msg.edit_text(
-        f"✅ <b>VK-сообщество добавлено!</b>\n\n"
-        f"📝 Название: <b>{group_name}</b>\n"
-        f"🆔 ID: <code>{group_id}</code>\n"
-        f"🔐 Ключ сохранён\n\n"
-        f"💡 Теперь добавьте источники через /add_source"
+        f"✅ VK-сообщество добавлено!\n\n"
+        f"Название: {group_name}\n"
+        f"Ссылка: {query_text}\n"
+        f"Ключ сохранён\n\n"
+        f"Теперь добавьте источники через /add_source"
     )
     
     for key in ['temp_project_id', 'temp_project_name', 'temp_platform', 'temp_vk_group']:
@@ -289,12 +283,12 @@ async def my_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📭 В проекте «{project.name}» нет цели.\nДобавьте: /add_target")
         return
     
-    text = f"🎯 <b>Цель проекта «{project.name}»</b>\n\n"
+    text = f"🎯 Цель проекта «{project.name}»\n\n"
     
     if target.platform == "telegram":
-        text += f"🟢 <b>Telegram</b>\n📝 {target.channel_title}\n"
+        text += f"🟢 Telegram\n📝 {target.channel_title}\n"
     elif target.platform == "vk":
-        text += f"🔵 <b>VK</b>\n📝 {target.vk_group_name or 'Группа VK'}\n"
+        text += f"🔵 VK\n📝 {target.vk_group_name or 'Группа VK'}\n"
     
     keyboard = [[InlineKeyboardButton("❌ Удалить цель", callback_data=f"del_target_{target.id}")]]
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
