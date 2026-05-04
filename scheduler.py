@@ -130,11 +130,10 @@ class Scheduler:
             logger.warning(f"⚠️ Project '{project.name}' has no sources or target")
             return
         
-        logger.info(f"📊 Project '{project.name}': {len(sources)} sources → {target.channel_title or target.vk_group_name}")
+        logger.info(f"📊 Project '{project.name}': {len(sources)} sources → {target.channel_title or target.vk_group_name} ({target.platform})")
         
         posts_to_publish = []
         total_parsed = 0
-        skipped_ads = 0
         
         async with TelegramScraper() as scraper:
             for source in sources:
@@ -154,7 +153,6 @@ class Scheduler:
                     if await is_post_parsed(project.id, post["url"]):
                         continue
                     
-                    # Фильтр по типу медиа
                     if source.media_filter == "photo_only":
                         if not post.get("has_media") or post.get("media_type") != "photo":
                             continue
@@ -163,7 +161,6 @@ class Scheduler:
                             continue
                     
                     if post.get("is_advertisement", False):
-                        skipped_ads += 1
                         continue
                     
                     post["source_username"] = source.channel_username
@@ -243,18 +240,6 @@ class Scheduler:
             
             interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
             
-            # Округляем время до ближайшего слота
-            if project.active_hours_start > 0:
-                start_total = project.active_hours_start * 60
-                current_total = next_time.hour * 60 + next_time.minute
-                if current_total >= start_total:
-                    slots = (current_total - start_total) // interval_minutes
-                    next_time = next_time.replace(hour=project.active_hours_start, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
-                    if next_time < current_time:
-                        next_time = next_time + timedelta(minutes=interval_minutes)
-                else:
-                    next_time = next_time.replace(hour=project.active_hours_start, minute=0, second=0, microsecond=0)
-            
             for i, post in enumerate(posts_to_publish):
                 if i > 0:
                     next_time = next_time + timedelta(minutes=interval_minutes)
@@ -265,9 +250,10 @@ class Scheduler:
                     project_id=project.id,
                     target_channel_id=target.id,
                     post_data=post,
-                    scheduled_time=utc_time
+                    scheduled_time=utc_time,
+                    platform=target.platform
                 )
-                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK")
+                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK ({target.platform})")
             
             async with AsyncSessionLocal() as session:
                 result = await session.execute(select(Project).where(Project.id == project.id))

@@ -30,7 +30,6 @@ class PostScheduler:
                 await asyncio.sleep(60)
 
     async def _check_and_publish(self):
-        """Проверить очередь и опубликовать готовые посты."""
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(PostQueue).where(
