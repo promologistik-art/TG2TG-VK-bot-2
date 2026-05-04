@@ -130,7 +130,7 @@ class Scheduler:
             logger.warning(f"⚠️ Project '{project.name}' has no sources or target")
             return
         
-        logger.info(f"📊 Project '{project.name}': {len(sources)} sources → {target.channel_title or target.vk_group_name} ({target.platform})")
+        logger.info(f"📊 Project '{project.name}': {len(sources)} sources → {target.channel_title or '—'}")
         
         posts_to_publish = []
         total_parsed = 0
@@ -153,6 +153,7 @@ class Scheduler:
                     if await is_post_parsed(project.id, post["url"]):
                         continue
                     
+                    # Фильтр по типу медиа (первый уровень)
                     if source.media_filter == "photo_only":
                         if not post.get("has_media") or post.get("media_type") != "photo":
                             continue
@@ -186,16 +187,29 @@ class Scheduler:
                         best_post = post
                 
                 if best_post:
+                    # УСИЛЕННАЯ проверка фильтра (второй уровень)
+                    if source.media_filter == "photo_only" and best_post.get("media_type") != "photo":
+                        logger.info(f"⚠️ Skipping non-photo post from @{source.channel_username}: type={best_post.get('media_type')}")
+                        continue
+                    if source.media_filter == "video_only" and best_post.get("media_type") != "video":
+                        logger.info(f"⚠️ Skipping non-video post from @{source.channel_username}: type={best_post.get('media_type')}")
+                        continue
+                    if source.media_filter in ("photo_only", "video_only") and not best_post.get("has_media"):
+                        logger.info(f"⚠️ Skipping no-media post from @{source.channel_username}")
+                        continue
+                    
+                    # Проверка: текст удалён, а медиа нет
+                    if source.remove_original_text and not best_post.get("has_media"):
+                        logger.info(f"⚠️ Skipping text-only post (text removed) from @{source.channel_username}")
+                        continue
+                    
                     has_text = bool(best_post.get("text", "").strip())
                     has_media = best_post.get("has_media") and best_post.get("media_url")
                     
                     if not has_text and not has_media:
                         continue
                     
-                    if source.remove_original_text and not has_media:
-                        continue
-                    
-                    logger.info(f"🏆 Selected from @{source.channel_username}: score={best_score}")
+                    logger.info(f"🏆 Selected from @{source.channel_username}: score={best_score}, type={best_post.get('media_type')}")
                     
                     await mark_post_parsed(project.id, source.id, best_post["url"])
                     total_parsed += 1
@@ -208,6 +222,7 @@ class Scheduler:
                         if await scraper.download_media(best_post["media_url"], media_path):
                             best_post["media_path"] = media_path
                         else:
+                            logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
                             if source.remove_original_text:
                                 continue
                     
@@ -220,6 +235,8 @@ class Scheduler:
                             .values(last_parsed=datetime.utcnow(), last_post_url=best_post["url"])
                         )
                         await session.commit()
+                else:
+                    logger.info(f"😴 @{source.channel_username}: no suitable posts")
         
         if posts_to_publish:
             logger.info(f"📤 Found {len(posts_to_publish)} posts")
@@ -253,7 +270,7 @@ class Scheduler:
                     scheduled_time=utc_time,
                     platform=target.platform
                 )
-                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK ({target.platform})")
+                logger.info(f"📅 Post {i+1} scheduled for {next_time.strftime('%d.%m.%Y %H:%M')} MSK")
             
             async with AsyncSessionLocal() as session:
                 result = await session.execute(select(Project).where(Project.id == project.id))
