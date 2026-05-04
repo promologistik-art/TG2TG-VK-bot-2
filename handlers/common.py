@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Очищаем все предыдущие диалоги
     context.user_data.clear()
     
     user = update.effective_user
@@ -50,9 +49,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 db_user.subscription_active = True
                 db_user.max_projects = 999
                 db_user.max_sources_per_project = 999
-                db_user.min_post_interval_minutes = 1
-                db_user.min_check_interval_minutes = 5
-                db_user.trial_ends_at = datetime.utcnow() + timedelta(days=36500)
             await session.commit()
         
         result = await session.execute(select(func.count()).select_from(Project).where(Project.user_id == user.id))
@@ -136,6 +132,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     admin_username = Config.ADMIN_USERNAME or "admin"
     text += f"\n\n📲 <a href='https://t.me/{admin_username}'>Написать админу</a>"
+    text += "\n\n📢 <a href='https://t.me/+MAuGbcnBQmgxZTIy'>Больше наших ботов в канале</a>"
     
     await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
 
