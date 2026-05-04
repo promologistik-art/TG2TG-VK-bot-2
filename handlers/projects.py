@@ -55,12 +55,7 @@ async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_icon = "👉 " if current_project and p.id == current_project.id else ""
         status_icon = "✅" if p.is_active else "❌"
         
-        target_name = 'не задана'
-        if target:
-            if target.platform == 'telegram':
-                target_name = target.channel_title or 'Канал Telegram'
-            elif target.platform == 'vk':
-                target_name = target.vk_group_name or 'Группа VK'
+        target_name = target.channel_title if target else 'не задана'
         
         text += f"{current_icon}{status_icon} <b>{p.name}</b>\n"
         text += f"   📥 Источников: {sources_count}\n"
@@ -205,20 +200,12 @@ async def show_project_stats(query, project_id: int):
         )
         pending = len(result.scalars().all())
     
-    target_name = 'не задана'
-    platform_name = '—'
-    if target:
-        if target.platform == 'telegram':
-            target_name = target.channel_title or 'Канал Telegram'
-            platform_name = 'Telegram'
-        elif target.platform == 'vk':
-            target_name = target.vk_group_name or 'Группа VK'
-            platform_name = 'VK'
+    target_name = target.channel_title if target else 'не задана'
     
     text = (
         f"📊 <b>Статистика «{project.name}»</b>\n\n"
         f"📥 Источников: {sources_count}\n"
-        f"📤 Цель ({platform_name}): {target_name}\n"
+        f"📤 Цель: {target_name}\n"
         f"⏰ Интервал парсинга: {project.check_interval_minutes} мин\n"
         f"📅 Интервал публикации: {project.post_interval_hours} ч\n"
         f"📈 Сегодня: спарсено {project.posts_parsed_today}, опубликовано {project.posts_posted_today}\n"

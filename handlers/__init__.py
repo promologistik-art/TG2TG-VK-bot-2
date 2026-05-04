@@ -3,7 +3,6 @@ from .constants import (
     AWAITING_INTERVAL, AWAITING_VIEWS, AWAITING_REACTIONS, AWAITING_SIGNATURE,
     AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
-    AWAITING_TARGET_PLATFORM, AWAITING_VK_TOKEN, AWAITING_VK_GROUP,
     AWAITING_TARIFF_SELECT, AWAITING_BROADCAST_MESSAGE
 )
 
@@ -19,8 +18,7 @@ from .sources import (
     my_sources, delete_source_callback
 )
 from .targets import (
-    add_target_start, add_target_platform, add_target_forward,
-    add_target_vk_token, add_target_vk_group,
+    add_target_start, add_target_forward,
     my_targets, delete_target_callback
 )
 from .settings import (
