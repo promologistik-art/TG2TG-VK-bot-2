@@ -21,10 +21,16 @@ class BackupService:
             logger.error(f"Database file not found: {self.db_path}")
             return None
         
-        # Создаём имя файла с датой
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_name = f"bot_backup_{timestamp}.db"
+        # Формат: bot(ДД.ММ.ГГГГ).db
+        date_str = datetime.now().strftime("%d.%m.%Y")
+        backup_name = f"bot({date_str}).db"
         backup_path = self.backup_dir / backup_name
+        
+        # Если файл с таким именем уже есть — добавляем время
+        if backup_path.exists():
+            time_str = datetime.now().strftime("%H.%M.%S")
+            backup_name = f"bot({date_str} {time_str}).db"
+            backup_path = self.backup_dir / backup_name
         
         try:
             # Копируем файл базы данных
@@ -42,7 +48,7 @@ class BackupService:
     def _cleanup_old_backups(self):
         """Удалить старые бэкапы, оставить только последние max_backups."""
         try:
-            backups = sorted(self.backup_dir.glob("bot_backup_*.db"))
+            backups = sorted(self.backup_dir.glob("bot(*).db"))
             
             if len(backups) > self.max_backups:
                 for old_backup in backups[:-self.max_backups]:
@@ -62,8 +68,8 @@ class BackupService:
         try:
             # Создаём бэкап текущей базы перед восстановлением
             if self.db_path.exists():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                pre_restore_backup = self.backup_dir / f"pre_restore_{timestamp}.db"
+                date_str = datetime.now().strftime("%d.%m.%Y")
+                pre_restore_backup = self.backup_dir / f"bot(pre_restore {date_str}).db"
                 shutil.copy2(self.db_path, pre_restore_backup)
                 logger.info(f"📦 Pre-restore backup created: {pre_restore_backup.name}")
             
@@ -79,7 +85,7 @@ class BackupService:
     def list_backups(self) -> list:
         """Получить список всех бэкапов."""
         try:
-            backups = sorted(self.backup_dir.glob("bot_backup_*.db"), reverse=True)
+            backups = sorted(self.backup_dir.glob("bot(*).db"), reverse=True)
             
             backup_list = []
             for backup in backups:
@@ -193,7 +199,3 @@ class AutoBackup:
         if self._task and not self._task.done():
             self._task.cancel()
         logger.info("🔴 AutoBackup stopped")
-
-
-# Импорт для timedelta
-from datetime import timedelta
