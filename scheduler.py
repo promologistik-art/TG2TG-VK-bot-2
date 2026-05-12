@@ -157,7 +157,7 @@ class Scheduler:
                     if await is_post_parsed(project.id, post["url"]):
                         continue
                     
-                    # Фильтр по типу медиа (первый уровень)
+                    # Фильтр по типу медиа (первый уровень — жёсткий)
                     if source.media_filter == "photo_only":
                         if not post.get("has_media") or post.get("media_type") != "photo":
                             continue
@@ -220,20 +220,6 @@ class Scheduler:
                         logger.info(f"⚠️ Skipping no-media post from @{source.channel_username}")
                         continue
                     
-                    # Проверка: текст удалён, а медиа нет
-                    if source.remove_original_text and not best_post.get("has_media"):
-                        logger.info(
-                            f"📝 Skipping text-only post (text removed) from @{source.channel_username}"
-                        )
-                        continue
-                    
-                    has_text = bool(best_post.get("text", "").strip())
-                    has_media = best_post.get("has_media") and best_post.get("media_url")
-                    
-                    if not has_text and not has_media:
-                        logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
-                        continue
-                    
                     logger.info(
                         f"🏆 Selected from @{source.channel_username}: "
                         f"score={best_score}, type={best_post.get('media_type')}, "
@@ -243,6 +229,8 @@ class Scheduler:
                     await mark_post_parsed(project.id, source.id, best_post["url"])
                     total_parsed += 1
                     
+                    # === СКАЧИВАНИЕ МЕДИА ===
+                    media_downloaded = False
                     if best_post.get("has_media") and best_post.get("media_url"):
                         ext = "jpg" if best_post.get("media_type") == "photo" else "mp4"
                         filename = f"{uuid.uuid4()}.{ext}"
@@ -250,12 +238,34 @@ class Scheduler:
                         
                         if await scraper.download_media(best_post["media_url"], media_path):
                             best_post["media_path"] = media_path
+                            media_downloaded = True
                             logger.info(f"💾 Media saved: {media_path}")
                         else:
                             logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
-                            if source.remove_original_text:
-                                logger.info(f"📝 Skipping post (text removed, no media) from @{source.channel_username}")
-                                continue
+                    elif best_post.get("has_media") and not best_post.get("media_url"):
+                        logger.warning(f"⚠️ Media flagged but no URL for @{source.channel_username}")
+                    
+                    # === КРИТИЧЕСКАЯ ПРОВЕРКА: media_filter требует медиа ===
+                    if source.media_filter in ("photo_only", "video_only"):
+                        if not media_downloaded:
+                            logger.info(
+                                f"🚫 BLOCKED: media_filter={source.media_filter} but no media downloaded "
+                                f"for @{source.channel_username}"
+                            )
+                            continue
+                    
+                    # === ПРОВЕРКА: remove_original_text без медиа ===
+                    if source.remove_original_text and not media_downloaded:
+                        logger.info(
+                            f"📝 Skipping post (text removed, no media) from @{source.channel_username}"
+                        )
+                        continue
+                    
+                    # === ПРОВЕРКА: пустой пост ===
+                    has_text = bool(best_post.get("text", "").strip())
+                    if not has_text and not media_downloaded:
+                        logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
+                        continue
                     
                     posts_to_publish.append(best_post)
                     
