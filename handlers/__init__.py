@@ -18,7 +18,7 @@ from .sources import (
     my_sources, delete_source_callback
 )
 from .targets import (
-    add_target_start, add_target_forward,
+    add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback
 )
 from .settings import (
