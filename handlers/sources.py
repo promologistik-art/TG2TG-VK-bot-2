@@ -9,15 +9,18 @@ from utils import extract_channel_username
 from .utils import require_project, get_sources_count, get_project_target, send_project_ready_message, check_action_limit, check_user_access
 from .constants import (
     AWAITING_SOURCE_USERNAME, AWAITING_CRITERIA, AWAITING_VIEWS, AWAITING_REACTIONS,
-    AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT
+    AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT, CURRENT_PROJECT_KEY
 )
 
 logger = logging.getLogger(__name__)
 
 
 async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Очищаем старые диалоги
+    # Сохраняем текущий проект перед очисткой
+    current_project = context.user_data.get(CURRENT_PROJECT_KEY)
     context.user_data.clear()
+    if current_project:
+        context.user_data[CURRENT_PROJECT_KEY] = current_project
     
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
