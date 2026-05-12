@@ -1,7 +1,6 @@
 import logging
 import os
-import csv
-import io
+import shutil
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ContextTypes, ConversationHandler
@@ -30,6 +29,12 @@ AWAITING_INTERVAL = 4
 AWAITING_PROJECT_NAME = 5
 AWAITING_VIEWS = 10
 AWAITING_REACTIONS = 11
+AWAITING_SIGNATURE = 12
+AWAITING_POST_INTERVAL = 13
+AWAITING_POST_START_TIME = 14
+AWAITING_MEDIA_FILTER = 15
+AWAITING_REMOVE_TEXT = 16
+AWAITING_BROADCAST_MESSAGE = 17
 
 CURRENT_PROJECT_KEY = "current_project_id"
 
@@ -37,6 +42,7 @@ CURRENT_PROJECT_KEY = "current_project_id"
 # ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
 async def get_current_project(telegram_id: int, context: ContextTypes.DEFAULT_TYPE) -> Project:
+    """Получает текущий проект пользователя из кэша контекста, иначе берёт первый активный."""
     project_id = context.user_data.get(CURRENT_PROJECT_KEY)
     
     async with AsyncSessionLocal() as session:
@@ -51,6 +57,7 @@ async def get_current_project(telegram_id: int, context: ContextTypes.DEFAULT_TY
             if project:
                 return project
         
+        # Если кэш пуст или проект не найден — берём первый активный
         result = await session.execute(
             select(Project).where(
                 Project.user_id == telegram_id,
@@ -66,6 +73,7 @@ async def get_current_project(telegram_id: int, context: ContextTypes.DEFAULT_TY
 
 
 async def require_project(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Project:
+    """Требует наличия проекта. Если нет — отправляет сообщение и возвращает None."""
     telegram_id = update.effective_user.id
     project = await get_current_project(telegram_id, context)
     
@@ -80,6 +88,7 @@ async def require_project(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def is_admin(telegram_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
@@ -89,6 +98,7 @@ async def is_admin(telegram_id: int) -> bool:
 
 
 async def setup_bot_commands(application):
+    """Устанавливает список команд бота в меню."""
     commands = [
         BotCommand("start", "🏠 Главное меню"),
         BotCommand("my_projects", "📁 Мои проекты"),
@@ -107,14 +117,19 @@ async def setup_bot_commands(application):
 
 
 async def get_sources_count(project_id: int) -> int:
+    """Возвращает количество активных источников в проекте."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(func.count()).select_from(SourceChannel).where(SourceChannel.project_id == project_id)
+            select(func.count()).select_from(SourceChannel).where(
+                SourceChannel.project_id == project_id,
+                SourceChannel.is_active == True
+            )
         )
         return result.scalar()
 
 
 async def get_project_target(project_id: int) -> TargetChannel:
+    """Возвращает целевой канал проекта."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(TargetChannel).where(
@@ -126,6 +141,7 @@ async def get_project_target(project_id: int) -> TargetChannel:
 
 
 async def get_user_projects_count(telegram_id: int) -> int:
+    """Возвращает количество проектов пользователя."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(func.count()).select_from(Project).where(Project.user_id == telegram_id)
@@ -134,6 +150,7 @@ async def get_user_projects_count(telegram_id: int) -> int:
 
 
 async def send_project_ready_message(update: Update, project_name: str):
+    """Отправляет сообщение о готовности проекта к работе."""
     text = (
         f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
         f"📋 Что дальше:\n"
@@ -148,6 +165,7 @@ async def send_project_ready_message(update: Update, project_name: str):
 # ============ ОСНОВНЫЕ КОМАНДЫ ============
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start."""
     user = update.effective_user
     is_new_user = False
     
@@ -215,6 +233,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /help."""
     text = (
         "📚 <b>Справка по командам</b>\n\n"
         "<b>Проекты:</b>\n"
@@ -244,6 +263,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ АДМИН-ПАНЕЛЬ ============
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает админ-панель."""
     if not await is_admin(update.effective_user.id):
         await update.message.reply_text("❌ Нет доступа")
         return
@@ -273,6 +293,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback'ов админ-панели."""
     query = update.callback_query
     await query.answer()
     
@@ -299,6 +320,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_admin_users(query):
+    """Показывает список пользователей."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).order_by(User.created_at.desc()).limit(20)
@@ -316,6 +338,7 @@ async def show_admin_users(query):
 
 
 async def create_backup_admin(query):
+    """Создаёт бэкап базы данных."""
     await query.edit_message_text("📦 Создаю бэкап...")
     
     backup_service = BackupService()
@@ -346,6 +369,7 @@ async def create_backup_admin(query):
 
 
 async def list_backups_admin(query):
+    """Показывает список бэкапов."""
     backup_service = BackupService()
     backups = backup_service.list_backups()
     
@@ -362,6 +386,7 @@ async def list_backups_admin(query):
 
 
 async def export_users_excel(query, context):
+    """Экспортирует список пользователей в Excel."""
     await query.edit_message_text("📊 Формирую отчёт...")
     
     async with AsyncSessionLocal() as session:
@@ -421,6 +446,7 @@ async def export_users_excel(query, context):
 
 
 async def show_diagnose_admin(query):
+    """Показывает диагностическую информацию."""
     text = "🔍 <b>Диагностика системы</b>\n\n"
     
     if os.path.exists(Config.DB_PATH):
@@ -450,6 +476,7 @@ async def show_diagnose_admin(query):
 
 
 async def clear_queue_admin(query):
+    """Очищает очередь публикации."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(PostQueue).where(PostQueue.status == "pending"))
         items = result.scalars().all()
@@ -466,6 +493,7 @@ async def clear_queue_admin(query):
 
 
 async def clear_failed_admin(query):
+    """Очищает failed посты из очереди."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(PostQueue).where(PostQueue.status == "failed"))
         items = result.scalars().all()
@@ -482,6 +510,7 @@ async def clear_failed_admin(query):
 
 
 async def admin_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает в главное меню админ-панели."""
     query = update.callback_query
     await query.answer()
     
@@ -505,6 +534,7 @@ async def admin_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ============ УПРАВЛЕНИЕ ПРОЕКТАМИ ============
 
 async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список проектов пользователя."""
     telegram_id = update.effective_user.id
     current_project = await get_current_project(telegram_id, context)
     
@@ -560,6 +590,7 @@ async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback'ов управления проектами."""
     query = update.callback_query
     await query.answer()
     telegram_id = update.effective_user.id
@@ -616,6 +647,7 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод названия нового проекта."""
     if not context.user_data.get('awaiting_project_name'):
         return
     
@@ -650,6 +682,7 @@ async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def show_project_stats(query, project_id: int):
+    """Показывает статистику конкретного проекта."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one()
@@ -677,6 +710,7 @@ async def show_project_stats(query, project_id: int):
 
 
 async def back_to_projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к списку проектов."""
     query = update.callback_query
     await query.answer()
     await my_projects(update, context)
@@ -685,6 +719,7 @@ async def back_to_projects_callback(update: Update, context: ContextTypes.DEFAUL
 # ============ ИСТОЧНИКИ ============
 
 async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает добавление источника."""
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
     
@@ -715,6 +750,7 @@ async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def add_source_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает username источника."""
     username = extract_channel_username(update.message.text)
     if not username:
         await update.message.reply_text("❌ Не удалось распознать username.")
@@ -752,6 +788,7 @@ async def add_source_username(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор критериев для источника."""
     query = update.callback_query
     await query.answer()
     
@@ -783,6 +820,7 @@ async def add_source_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def criteria_views_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод минимальных просмотров."""
     try:
         views = int(update.message.text.strip())
         if views < 0:
@@ -797,6 +835,7 @@ async def criteria_views_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def criteria_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод минимальных реакций."""
     try:
         reactions = int(update.message.text.strip())
         if reactions < 0:
@@ -821,6 +860,7 @@ async def criteria_reactions_input(update: Update, context: ContextTypes.DEFAULT
 
 
 async def save_source_with_criteria(target, context, temp: dict, criteria: dict):
+    """Сохраняет источник с критериями в базу данных."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(SourceChannel).where(
@@ -881,6 +921,7 @@ async def save_source_with_criteria(target, context, temp: dict, criteria: dict)
 
 
 async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список источников текущего проекта."""
     telegram_id = update.effective_user.id
     project = await require_project(update, context)
     
@@ -932,6 +973,7 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет источник по callback."""
     query = update.callback_query
     await query.answer()
     
@@ -947,19 +989,67 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
 # ============ ЦЕЛЕВЫЕ КАНАЛЫ ============
 
 async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавление целевого канала. Проверяет текущий проект и другие проекты."""
+    telegram_id = update.effective_user.id
     project = await require_project(update, context)
     
     if not project:
         return ConversationHandler.END
     
+    # Проверяем, есть ли target в ТЕКУЩЕМ проекте
     target = await get_project_target(project.id)
     if target:
         await update.message.reply_text(
-            f"⚠️ В проекте уже есть целевой канал: {target.channel_title}\n"
-            f"Удалите его через /my_targets"
+            f"⚠️ В текущем проекте «{project.name}» уже есть целевой канал:\n"
+            f"📤 {target.channel_title}\n\n"
+            f"Чтобы добавить новый, сначала удалите текущий через /my_targets\n"
+            f"Или переключитесь на другой проект в /my_projects"
         )
         return ConversationHandler.END
     
+    # Проверяем, есть ли target в ДРУГИХ проектах пользователя
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Project).where(
+                Project.user_id == telegram_id,
+                Project.id != project.id,
+                Project.is_active == True
+            )
+        )
+        other_projects = result.scalars().all()
+    
+    other_with_target = []
+    for p in other_projects:
+        t = await get_project_target(p.id)
+        if t:
+            other_with_target.append((p, t))
+    
+    if other_with_target:
+        # Показываем, что target уже есть в других проектах
+        text = f"📁 Текущий проект: «{project.name}»\n\n"
+        text += "ℹ️ Целевой канал уже существует в других проектах:\n"
+        for p, t in other_with_target:
+            text += f"• Проект «{p.name}» → {t.channel_title}\n"
+        text += f"\nДобавляем новый целевой канал в проект «{project.name}». Продолжить?"
+        
+        keyboard = []
+        for p, t in other_with_target:
+            keyboard.append([InlineKeyboardButton(
+                f"🔄 Переключиться на «{p.name}»", 
+                callback_data=f"select_project_{p.id}"
+            )])
+        keyboard.append([InlineKeyboardButton(
+            f"✅ Да, добавить в «{project.name}»", 
+            callback_data="add_target_continue"
+        )])
+        
+        await update.message.reply_text(
+            text, 
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ConversationHandler.END
+    
+    # Всё чисто — продолжаем добавление
     context.user_data['temp_project_id'] = project.id
     context.user_data['temp_project_name'] = project.name
     
@@ -973,7 +1063,41 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return AWAITING_TARGET_FORWARD
 
 
+async def add_target_continue_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback для продолжения добавления target после предупреждения."""
+    query = update.callback_query
+    await query.answer()
+    
+    telegram_id = update.effective_user.id
+    project = await require_project(update, context)
+    
+    if not project:
+        return
+    
+    # Дополнительно проверяем, что target всё ещё не добавлен
+    target = await get_project_target(project.id)
+    if target:
+        await query.edit_message_text(
+            f"⚠️ В проекте «{project.name}» уже есть целевой канал: {target.channel_title}\n"
+            f"Удалите его через /my_targets"
+        )
+        return
+    
+    context.user_data['temp_project_id'] = project.id
+    context.user_data['temp_project_name'] = project.name
+    
+    me = await context.bot.get_me()
+    await query.edit_message_text(
+        f"🎯 Добавление целевого канала в «{project.name}»\n\n"
+        f"1. Добавьте @{me.username} в админы канала\n"
+        f"2. Выдайте права на публикацию\n"
+        f"3. Перешлите сюда любое сообщение из канала"
+    )
+    return AWAITING_TARGET_FORWARD
+
+
 async def add_target_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает пересланное сообщение из целевого канала."""
     msg = update.message
     
     if not msg.forward_from_chat or msg.forward_from_chat.type != 'channel':
@@ -1017,6 +1141,7 @@ async def add_target_forward(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def my_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает целевой канал текущего проекта."""
     project = await require_project(update, context)
     
     if not project:
@@ -1047,6 +1172,7 @@ async def my_targets(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def delete_target_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет целевой канал по callback."""
     query = update.callback_query
     await query.answer()
     
@@ -1062,6 +1188,7 @@ async def delete_target_callback(update: Update, context: ContextTypes.DEFAULT_T
 # ============ НАСТРОЙКИ ============
 
 async def set_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает настройку интервала парсинга."""
     project = await require_project(update, context)
     
     if not project:
@@ -1090,6 +1217,7 @@ async def set_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор интервала парсинга."""
     query = update.callback_query
     await query.answer()
     
@@ -1109,9 +1237,148 @@ async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 
+async def set_post_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает настройку интервала публикации."""
+    project = await require_project(update, context)
+    
+    if not project:
+        return ConversationHandler.END
+    
+    context.user_data['temp_project_id'] = project.id
+    
+    keyboard = []
+    hours_options = [1, 2, 3, 4, 6, 8, 12, 24]
+    row = []
+    for i, h in enumerate(hours_options):
+        row.append(InlineKeyboardButton(f"{h}ч", callback_data=f"post_{h}"))
+        if len(row) == 4:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+    
+    await update.message.reply_text(
+        f"📅 <b>Интервал публикации</b>\n\n"
+        f"Проект: {project.name}\n"
+        f"Текущий: каждые {project.post_interval_hours} ч\n\n"
+        f"Выберите новый интервал:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_POST_INTERVAL
+
+
+async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор интервала публикации."""
+    query = update.callback_query
+    await query.answer()
+    
+    hours = int(query.data.replace("post_", ""))
+    context.user_data['temp_post_interval'] = hours
+    
+    keyboard = [
+        [InlineKeyboardButton("🌅 Утро (08:00-20:00)", callback_data="starttime_morning")],
+        [InlineKeyboardButton("🌙 Весь день (00:00-23:59)", callback_data="starttime_allday")],
+        [InlineKeyboardButton("🎯 Своё время", callback_data="starttime_custom")],
+    ]
+    
+    await query.edit_message_text(
+        f"⏰ <b>Время публикации</b>\n\n"
+        f"Интервал: каждые {hours} ч\n\n"
+        f"Выберите режим:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_POST_START_TIME
+
+
+async def set_post_start_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор времени начала публикации."""
+    query = update.callback_query
+    await query.answer()
+    
+    choice = query.data.replace("starttime_", "")
+    hours = context.user_data.get('temp_post_interval', 2)
+    project_id = context.user_data.get('temp_project_id')
+    
+    if choice == "morning":
+        start, end = 8, 20
+    elif choice == "allday":
+        start, end = 0, 23
+    else:
+        start, end = 8, 20  # default
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(Project)
+            .where(Project.id == project_id)
+            .values(
+                post_interval_hours=hours,
+                active_hours_start=start,
+                active_hours_end=end
+            )
+        )
+        await session.commit()
+    
+    time_desc = f"{start}:00 - {end}:00" if choice != "allday" else "круглосуточно"
+    
+    await query.edit_message_text(
+        f"✅ Интервал публикации: каждые {hours} ч\n"
+        f"🕐 Время: {time_desc}"
+    )
+    
+    context.user_data.pop('temp_project_id', None)
+    context.user_data.pop('temp_post_interval', None)
+    return ConversationHandler.END
+
+
+async def set_signature_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает настройку подписи."""
+    project = await require_project(update, context)
+    
+    if not project:
+        return ConversationHandler.END
+    
+    context.user_data['temp_project_id'] = project.id
+    
+    await update.message.reply_text(
+        f"✍️ <b>Подпись к постам</b>\n\n"
+        f"Проект: {project.name}\n"
+        f"Текущая: {project.signature or 'нет'}\n\n"
+        f"Отправьте текст подписи (или '-' чтобы убрать):",
+        parse_mode="HTML"
+    )
+    return AWAITING_SIGNATURE
+
+
+async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод подписи."""
+    signature = update.message.text.strip()
+    project_id = context.user_data.get('temp_project_id')
+    
+    if signature == '-':
+        signature = None
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(Project)
+            .where(Project.id == project_id)
+            .values(signature=signature)
+        )
+        await session.commit()
+    
+    await update.message.reply_text(
+        f"✅ Подпись {'удалена' if not signature else 'установлена'}: {signature or ''}"
+    )
+    
+    context.user_data.pop('temp_project_id', None)
+    return ConversationHandler.END
+
+
 # ============ СТАТИСТИКА ============
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает общую статистику пользователя."""
     telegram_id = update.effective_user.id
     
     async with AsyncSessionLocal() as session:
@@ -1137,6 +1404,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def project_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику текущего проекта."""
     project = await require_project(update, context)
     
     if not project:
@@ -1166,6 +1434,7 @@ async def project_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ ПАРСИНГ И ОЧЕРЕДЬ ============
 
 async def parse_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает парсинг вручную."""
     project = await require_project(update, context)
     
     if not project:
@@ -1201,6 +1470,7 @@ async def parse_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает очередь публикации."""
     project = await require_project(update, context)
     
     if not project:
@@ -1219,7 +1489,7 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     text = f"📬 <b>Очередь публикации «{project.name}»</b>\n\n"
-    text += f"⏰ Интервал: каждые {project.post_interval_hours} ч (мин. 30 мин)\n\n"
+    text += f"⏰ Интервал: каждые {project.post_interval_hours} ч\n\n"
     
     MSK_OFFSET = timedelta(hours=3)
     
@@ -1237,7 +1507,7 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Опубликовать следующий пост из очереди немедленно."""
+    """Опубликовать следующий пост из очереди немедленно (админ)."""
     project = await require_project(update, context)
     
     if not project:
@@ -1333,9 +1603,81 @@ async def clear_failed_queue(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await msg.edit_text(f"✅ Удалено {deleted} failed постов")
 
 
+async def clear_all_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить все посты из очереди (админ)."""
+    if not await is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Нет доступа")
+        return
+    
+    msg = await update.message.reply_text("🧹 Очищаю всю очередь...")
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(PostQueue))
+        items = result.scalars().all()
+        
+        deleted = len(items)
+        for item in items:
+            await session.delete(item)
+        
+        await session.commit()
+    
+    await msg.edit_text(f"✅ Удалено {deleted} постов из очереди")
+
+
+async def clear_project_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удалить все посты из очереди текущего проекта."""
+    project = await require_project(update, context)
+    
+    if not project:
+        return
+    
+    msg = await update.message.reply_text(f"🧹 Очищаю очередь проекта «{project.name}»...")
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PostQueue).where(PostQueue.project_id == project.id)
+        )
+        items = result.scalars().all()
+        
+        deleted = len(items)
+        for item in items:
+            await session.delete(item)
+        
+        await session.commit()
+    
+    await msg.edit_text(f"✅ Удалено {deleted} постов из очереди проекта «{project.name}»")
+
+
+async def reset_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает историю parsed_posts для текущего проекта."""
+    project = await require_project(update, context)
+    
+    if not project:
+        return
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ParsedPost).where(ParsedPost.project_id == project.id)
+        )
+        items = result.scalars().all()
+        
+        deleted = len(items)
+        for item in items:
+            await session.delete(item)
+        
+        await session.commit()
+    
+    await update.message.reply_text(
+        f"✅ История парсинга для проекта «{project.name}» сброшена.\n"
+        f"Удалено {deleted} записей.\n"
+        f"При следующем парсинге все посты будут считаться новыми."
+    )
+
+
 # ============ ТЕСТ ============
 
 async def test_scraper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестирует парсер на указанном канале."""
     if not context.args:
         await update.message.reply_text("ℹ️ /test [username]")
         return
@@ -1362,9 +1704,246 @@ async def test_scraper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(text)
 
 
+async def debug_reactions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отладка: показывает реакции на посты канала."""
+    if not context.args:
+        await update.message.reply_text("ℹ️ /debug_reactions [username]")
+        return
+    
+    username = context.args[0].replace("@", "")
+    msg = await update.message.reply_text(f"🔍 Анализирую реакции @{username}...")
+    
+    async with TelegramScraper() as scraper:
+        posts = await scraper.get_posts(username, limit=10)
+        
+        if not posts:
+            await msg.edit_text("❌ Посты не найдены")
+            return
+        
+        text = f"📊 <b>Реакции @{username}</b>\n\n"
+        for p in posts[:10]:
+            text += f"👁 {format_number(p['views'])} | ❤️ {format_number(p.get('reactions', 0))}"
+            if p.get('reactions_detail'):
+                text += f" {p['reactions_detail']}"
+            text += "\n"
+    
+    await msg.edit_text(text, parse_mode="HTML")
+
+
+# ============ BROADCAST ============
+
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает рассылку сообщения всем пользователям (админ)."""
+    if not await is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Нет доступа")
+        return ConversationHandler.END
+    
+    await update.message.reply_text(
+        "📢 <b>Рассылка</b>\n\n"
+        "Отправьте текст сообщения для всех пользователей:",
+        parse_mode="HTML"
+    )
+    return AWAITING_BROADCAST_MESSAGE
+
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет рассылку всем пользователям."""
+    text = update.message.text
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+    
+    sent = 0
+    failed = 0
+    
+    for user in users:
+        try:
+            await context.bot.send_message(user.telegram_id, text)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            failed += 1
+    
+    await update.message.reply_text(
+        f"✅ Рассылка завершена!\n\n"
+        f"📤 Отправлено: {sent}\n"
+        f"❌ Ошибок: {failed}"
+    )
+    
+    return ConversationHandler.END
+
+
+# ============ MEDIA FILTER ============
+
+async def media_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор медиа-фильтра."""
+    query = update.callback_query
+    await query.answer()
+    
+    filter_type = query.data.replace("media_", "")
+    
+    if filter_type == "video":
+        keyboard = [
+            [InlineKeyboardButton("Без ограничений", callback_data="duration_none")],
+            [InlineKeyboardButton("До 1 минуты", callback_data="duration_60")],
+            [InlineKeyboardButton("До 3 минут", callback_data="duration_180")],
+            [InlineKeyboardButton("До 5 минут", callback_data="duration_300")],
+            [InlineKeyboardButton("До 10 минут", callback_data="duration_600")],
+        ]
+        await query.edit_message_text(
+            "🎬 <b>Максимальная длительность видео:</b>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
+        )
+        return AWAITING_MEDIA_FILTER
+    else:
+        context.user_data['temp_source_media'] = filter_type
+        context.user_data['temp_source_duration'] = None
+        await query.edit_message_text(f"✅ Медиа-фильтр: {filter_type}")
+        return await ask_remove_text(query)
+
+
+async def duration_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор длительности видео."""
+    query = update.callback_query
+    await query.answer()
+    
+    duration = query.data.replace("duration_", "")
+    context.user_data['temp_source_media'] = "video"
+    context.user_data['temp_source_duration'] = None if duration == "none" else int(duration)
+    
+    duration_text = "без ограничений" if duration == "none" else f"до {int(duration)//60} мин"
+    await query.edit_message_text(f"✅ Видео: {duration_text}")
+    return await ask_remove_text(query)
+
+
+async def ask_remove_text(query):
+    """Спрашивает, удалять ли текст оригинала."""
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалять текст", callback_data="text_yes")],
+        [InlineKeyboardButton("❌ Нет, оставлять", callback_data="text_no")],
+    ]
+    await query.message.reply_text(
+        "📝 <b>Удалять текст оригинального поста?</b>",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_REMOVE_TEXT
+
+
+async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор удаления текста."""
+    query = update.callback_query
+    await query.answer()
+    
+    remove = query.data == "text_yes"
+    context.user_data['temp_remove_text'] = remove
+    
+    temp = context.user_data.get('temp_source')
+    if temp:
+        temp['media_filter'] = context.user_data.get('temp_source_media', 'all')
+        temp['max_video_duration'] = context.user_data.get('temp_source_duration')
+        temp['remove_original_text'] = remove
+        criteria = context.user_data.get('temp_criteria', {})
+        await save_source_with_criteria(query, context, temp, criteria)
+    
+    return ConversationHandler.END
+
+
+# ============ АДМИН ТАРИФЫ ============
+
+async def admin_set_tariff_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установка тарифа пользователю (админ)."""
+    if not await is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Нет доступа")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("ℹ️ /admin_set_tariff [user_id] [trial|basic|pro|unlimited]")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        tariff = context.args[1] if len(context.args) > 1 else "basic"
+    except:
+        await update.message.reply_text("❌ Неверный формат. Пример: /admin_set_tariff 123456 pro")
+        return
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await update.message.reply_text("❌ Пользователь не найден")
+            return
+        
+        if tariff == "trial":
+            user.tariff = "trial"
+            user.trial_ends_at = datetime.utcnow() + timedelta(days=5)
+            user.subscription_active = False
+        elif tariff == "basic":
+            user.tariff = "basic"
+            user.subscription_active = True
+            user.subscription_ends_at = datetime.utcnow() + timedelta(days=30)
+        elif tariff == "pro":
+            user.tariff = "pro"
+            user.subscription_active = True
+            user.subscription_ends_at = datetime.utcnow() + timedelta(days=30)
+        elif tariff == "unlimited":
+            user.tariff = "unlimited"
+            user.subscription_active = True
+            user.subscription_ends_at = datetime.utcnow() + timedelta(days=365)
+        
+        await session.commit()
+    
+    await update.message.reply_text(
+        f"✅ Тариф пользователя {user_id} установлен: {tariff}"
+    )
+
+
+async def admin_extend_trial_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продлевает триал пользователю (админ)."""
+    if not await is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Нет доступа")
+        return
+    
+    if not context.args:
+        await update.message.reply_text("ℹ️ /admin_extend_trial [user_id] [days]")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        days = int(context.args[1]) if len(context.args) > 1 else 5
+    except:
+        await update.message.reply_text("❌ Неверный формат. Пример: /admin_extend_trial 123456 7")
+        return
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            await update.message.reply_text("❌ Пользователь не найден")
+            return
+        
+        if user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
+            user.trial_ends_at = user.trial_ends_at + timedelta(days=days)
+        else:
+            user.trial_ends_at = datetime.utcnow() + timedelta(days=days)
+        
+        user.tariff = "trial"
+        await session.commit()
+    
+    await update.message.reply_text(
+        f"✅ Триал пользователя {user_id} продлён на {days} дней до {user.trial_ends_at.strftime('%d.%m.%Y')}"
+    )
+
+
 # ============ ОТМЕНА ============
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменяет текущее действие."""
     context.user_data.clear()
     await update.message.reply_text("❌ Действие отменено")
     return ConversationHandler.END

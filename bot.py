@@ -17,7 +17,7 @@ from handlers import (
     criteria_views_input, criteria_reactions_input,
     media_filter_callback, duration_callback, remove_text_callback,
     my_sources, delete_source_callback,
-    add_target_start, add_target_forward,
+    add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
     set_post_interval_start, set_post_interval_callback,
@@ -92,7 +92,10 @@ async def main():
     )
     
     add_target_conv = ConversationHandler(
-        entry_points=[CommandHandler("add_target", add_target_start)],
+        entry_points=[
+            CommandHandler("add_target", add_target_start),
+            CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$")
+        ],
         states={
             AWAITING_TARGET_FORWARD: [MessageHandler(filters.FORWARDED, add_target_forward)],
         },

@@ -51,7 +51,11 @@ class Scheduler:
             now = datetime.utcnow()
             from telegram import Bot
             bot = Bot(token=Config.BOT_TOKEN)
-            await bot.send_message(chat_id=Config.ADMIN_ID, text=f"📊 Отчёт\n📅 {now.strftime('%d.%m.%Y')}\n👥 Всего: {len(users)}")
+            await bot.send_message(
+                chat_id=Config.ADMIN_ID, 
+                text=f"📊 <b>Отчёт</b>\n📅 {now.strftime('%d.%m.%Y')}\n👥 Всего: {len(users)}",
+                parse_mode="HTML"
+            )
         except Exception as e:
             logger.error(f"Daily report failed: {e}")
 
@@ -161,6 +165,7 @@ class Scheduler:
                         if not post.get("has_media") or post.get("media_type") != "video":
                             continue
                     
+                    # Пропускаем рекламу
                     if post.get("is_advertisement", False):
                         continue
                     
@@ -187,12 +192,29 @@ class Scheduler:
                         best_post = post
                 
                 if best_post:
+                    # Проверка длительности видео
+                    if source.max_video_duration and source.max_video_duration > 0:
+                        if best_post.get("media_type") == "video":
+                            video_dur = best_post.get("video_duration", 0)
+                            if video_dur > 0 and video_dur > source.max_video_duration:
+                                logger.info(
+                                    f"⏰ Video too long from @{source.channel_username}: "
+                                    f"{video_dur}s > {source.max_video_duration}s max"
+                                )
+                                continue
+                    
                     # УСИЛЕННАЯ проверка фильтра (второй уровень)
                     if source.media_filter == "photo_only" and best_post.get("media_type") != "photo":
-                        logger.info(f"⚠️ Skipping non-photo post from @{source.channel_username}: type={best_post.get('media_type')}")
+                        logger.info(
+                            f"⚠️ Skipping non-photo post from @{source.channel_username}: "
+                            f"type={best_post.get('media_type')}"
+                        )
                         continue
                     if source.media_filter == "video_only" and best_post.get("media_type") != "video":
-                        logger.info(f"⚠️ Skipping non-video post from @{source.channel_username}: type={best_post.get('media_type')}")
+                        logger.info(
+                            f"⚠️ Skipping non-video post from @{source.channel_username}: "
+                            f"type={best_post.get('media_type')}"
+                        )
                         continue
                     if source.media_filter in ("photo_only", "video_only") and not best_post.get("has_media"):
                         logger.info(f"⚠️ Skipping no-media post from @{source.channel_username}")
@@ -200,16 +222,23 @@ class Scheduler:
                     
                     # Проверка: текст удалён, а медиа нет
                     if source.remove_original_text and not best_post.get("has_media"):
-                        logger.info(f"⚠️ Skipping text-only post (text removed) from @{source.channel_username}")
+                        logger.info(
+                            f"📝 Skipping text-only post (text removed) from @{source.channel_username}"
+                        )
                         continue
                     
                     has_text = bool(best_post.get("text", "").strip())
                     has_media = best_post.get("has_media") and best_post.get("media_url")
                     
                     if not has_text and not has_media:
+                        logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
                         continue
                     
-                    logger.info(f"🏆 Selected from @{source.channel_username}: score={best_score}, type={best_post.get('media_type')}")
+                    logger.info(
+                        f"🏆 Selected from @{source.channel_username}: "
+                        f"score={best_score}, type={best_post.get('media_type')}, "
+                        f"duration={best_post.get('video_duration', 0)}s"
+                    )
                     
                     await mark_post_parsed(project.id, source.id, best_post["url"])
                     total_parsed += 1
@@ -221,9 +250,11 @@ class Scheduler:
                         
                         if await scraper.download_media(best_post["media_url"], media_path):
                             best_post["media_path"] = media_path
+                            logger.info(f"💾 Media saved: {media_path}")
                         else:
                             logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
                             if source.remove_original_text:
+                                logger.info(f"📝 Skipping post (text removed, no media) from @{source.channel_username}")
                                 continue
                     
                     posts_to_publish.append(best_post)
@@ -239,13 +270,15 @@ class Scheduler:
                     logger.info(f"😴 @{source.channel_username}: no suitable posts")
         
         if posts_to_publish:
-            logger.info(f"📤 Found {len(posts_to_publish)} posts")
+            logger.info(f"📤 Found {len(posts_to_publish)} posts to queue")
             
             current_time = get_moscow_time().replace(tzinfo=None)
             
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    select(PostQueue).where(PostQueue.project_id == project.id).order_by(PostQueue.scheduled_time.desc()).limit(1)
+                    select(PostQueue).where(
+                        PostQueue.project_id == project.id
+                    ).order_by(PostQueue.scheduled_time.desc()).limit(1)
                 )
                 last_queued = result.scalar_one_or_none()
             
@@ -255,7 +288,11 @@ class Scheduler:
             else:
                 next_time = current_time
             
-            interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
+            interval_minutes = max(
+                int(project.post_interval_hours * 60),
+                user.min_post_interval_minutes,
+                Config.MIN_POST_INTERVAL_MINUTES
+            )
             
             for i, post in enumerate(posts_to_publish):
                 if i > 0:
