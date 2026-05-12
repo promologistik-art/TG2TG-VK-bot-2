@@ -5,14 +5,19 @@ from sqlalchemy import select, delete
 from database import AsyncSessionLocal
 from models import TargetChannel, Project
 from .utils import require_project, get_sources_count, get_project_target, send_project_ready_message
-from .constants import AWAITING_TARGET_FORWARD
+from .constants import AWAITING_TARGET_FORWARD, CURRENT_PROJECT_KEY
 
 logger = logging.getLogger(__name__)
 
 
 async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавление целевого канала. Проверяет текущий проект и другие проекты."""
+    # Сохраняем текущий проект перед очисткой
+    current_project = context.user_data.get(CURRENT_PROJECT_KEY)
     context.user_data.clear()
+    if current_project:
+        context.user_data[CURRENT_PROJECT_KEY] = current_project
+    
     telegram_id = update.effective_user.id
     
     project = await require_project(update, context)
@@ -48,7 +53,6 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             other_with_target.append((p, t))
     
     if other_with_target:
-        # Показываем, что target уже есть в других проектах
         text = f"📁 Текущий проект: «{project.name}»\n\n"
         text += "ℹ️ Целевой канал уже существует в других проектах:\n"
         for p, t in other_with_target:
@@ -72,7 +76,7 @@ async def add_target_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
     
-    # Всё чисто — продолжаем добавление
+    # Всё чисто — продолжаем
     context.user_data['temp_project_id'] = project.id
     context.user_data['temp_project_name'] = project.name
     
@@ -96,7 +100,6 @@ async def add_target_continue_callback(update: Update, context: ContextTypes.DEF
     if not project:
         return ConversationHandler.END
     
-    # Проверяем, что target всё ещё не добавлен
     target = await get_project_target(project.id)
     if target:
         await query.edit_message_text(
