@@ -16,7 +16,10 @@ class TelegramPoster:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def add_to_queue(self, project_id: int, target_channel_id: int, post_data: dict, scheduled_time: datetime, platform: str = "telegram"):
+    async def add_to_queue(
+        self, project_id: int, target_channel_id: int, 
+        post_data: dict, scheduled_time: datetime, platform: str = "telegram"
+    ):
         async with AsyncSessionLocal() as session:
             queue_item = PostQueue(
                 project_id=project_id,
@@ -70,7 +73,7 @@ class TelegramPoster:
         else:
             caption = original_text
         
-        # Добавляем подпись
+        # Добавляем подпись проекта
         if signature:
             if caption:
                 caption += f"\n\n{signature}"
@@ -97,7 +100,11 @@ class TelegramPoster:
             await self._mark_failed(queue_item, "Нет медиа и нет текста — только подпись")
             return False
         
-        parse_mode = "HTML" if caption and "<" in caption else None
+        # УЛУЧШЕННАЯ проверка parse_mode — только если есть реальные HTML-теги
+        html_tags = ["<a href=", "<b>", "<i>", "<code>", "<s>", "<u>", "<pre>", "<blockquote>"]
+        parse_mode = None
+        if caption and any(tag in caption for tag in html_tags):
+            parse_mode = "HTML"
         
         if has_media:
             try:
@@ -131,17 +138,28 @@ class TelegramPoster:
                 return True
                 
             except TelegramError as e:
+                error_str = str(e).lower()
                 logger.error(f"Failed to send media: {e}")
                 
-                if parse_mode and "parse" in str(e).lower():
+                # Если ошибка из-за parse_mode — пробуем без
+                if parse_mode and "parse" in error_str:
                     try:
                         with open(media_path, "rb") as f:
                             if media_type == "photo":
-                                await self.bot.send_photo(chat_id=real_chat_id, photo=f, caption=caption if caption else None)
+                                await self.bot.send_photo(
+                                    chat_id=real_chat_id, photo=f, 
+                                    caption=caption if caption else None
+                                )
                             elif media_type == "video":
-                                await self.bot.send_video(chat_id=real_chat_id, video=f, caption=caption if caption else None)
+                                await self.bot.send_video(
+                                    chat_id=real_chat_id, video=f, 
+                                    caption=caption if caption else None
+                                )
                             else:
-                                await self.bot.send_document(chat_id=real_chat_id, document=f, caption=caption if caption else None)
+                                await self.bot.send_document(
+                                    chat_id=real_chat_id, document=f, 
+                                    caption=caption if caption else None
+                                )
                         try:
                             os.remove(media_path)
                         except:
@@ -151,14 +169,28 @@ class TelegramPoster:
                     except:
                         pass
                 
+                # Если медиа не отправилось — пробуем отправить только текст
                 if caption:
                     try:
-                        await self.bot.send_message(chat_id=real_chat_id, text=caption, disable_web_page_preview=True)
+                        await self.bot.send_message(
+                            chat_id=real_chat_id, text=caption, 
+                            disable_web_page_preview=True
+                        )
+                        try:
+                            os.remove(media_path)
+                        except:
+                            pass
                         await self._mark_published(queue_item)
                         return True
                     except:
                         pass
                 
+                error_text = str(e)[:80].replace("\n", " ")
+                await self._mark_failed(queue_item, f"Ошибка отправки: {error_text}")
+                return False
+                
+            except Exception as e:
+                logger.error(f"Unexpected error sending media: {e}")
                 error_text = str(e)[:80].replace("\n", " ")
                 await self._mark_failed(queue_item, f"Ошибка отправки: {error_text}")
                 return False
@@ -175,7 +207,10 @@ class TelegramPoster:
             except TelegramError as e:
                 if parse_mode:
                     try:
-                        await self.bot.send_message(chat_id=real_chat_id, text=caption, disable_web_page_preview=True)
+                        await self.bot.send_message(
+                            chat_id=real_chat_id, text=caption, 
+                            disable_web_page_preview=True
+                        )
                         await self._mark_published(queue_item)
                         return True
                     except:
