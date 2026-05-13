@@ -15,7 +15,58 @@ AD_KEYWORDS = [
     '#реклама', '#спонсор', '#партнер', '#партнёр', '#ad', '#рекламныйпост',
     'реклама', 'спонсор', 'партнёрский', 'промо', 'сообщение от партнёра',
     'на правах рекламы', 'платное размещение', 'спонсируется', 'advertisement',
-    '#sponsored', '#promo', '#sponsor'
+    '#sponsored', '#promo', '#sponsor',
+    # Банки и компании
+    'сбер', 'сбербанк', 'sber', 'sberbank',
+    'альфа-банк', 'альфа банк', 'alfabank', 'alfabank',
+    'втб', 'vtb',
+    'тинькофф', 'тиньков', 'tinkoff',
+    'мтс', 'mts',
+    'билайн', 'beeline',
+    'мегафон', 'megafon',
+    'газпромбанк', 'россельхозбанк', 'рсхб',
+    'отп банк', 'otpbank',
+    'совкомбанк', 'sovcombank',
+    'райффайзен', 'raiffeisen',
+    'почта банк', 'почтабанк',
+    'хоум кредит', 'home credit',
+    'ренессанс кредит', 'rencredit',
+    'юникредит', 'unicredit',
+    'промсвязьбанк', 'псб',
+    'ак барс', 'акбарс',
+    'уралсиб', 'uralsib',
+    'зенит банк', 'zenitbank',
+    'мкб', 'московский кредитный банк',
+    'росбанк', 'rosbank',
+    'ситибанк', 'citibank',
+    # Операторы связи
+    'теле2', 'tele2',
+    'yota', 'йота',
+    'ростелеком', 'rostelecom',
+    'дом.ру', 'domru',
+    # Маркетплейсы (часто реклама)
+    'wildberries', 'вайлдберриз', 'вб',
+    'ozon', 'озон',
+    'яндекс маркет', 'yandex market',
+    'алиэкспресс', 'aliexpress',
+    'сбермегамаркет', 'мегамаркет',
+    # Кредиты и финансы
+    'кредитная карта', 'кредит наличными',
+    'дебетовая карта', 'оформить карту',
+    'рефинансирование', 'ипотека',
+    'микрозайм', 'займ до зарплаты',
+    'вклад под', 'накопительный счет',
+    'инвестиции в', 'брокерский счет',
+    'страхование жизни', 'осаго', 'каско',
+    # Общие рекламные паттерны
+    'узнать подробнее на сайте',
+    'перейти на сайт',
+    'жми на ссылку',
+    'только сегодня', 'ограниченное предложение',
+    'скидка до', 'распродажа',
+    'купить со скидкой',
+    'получите бесплатно',
+    'пройдите опрос', 'заполните анкету',
 ]
 
 
@@ -60,19 +111,7 @@ class TelegramScraper:
         title_tag = soup.find("meta", property="og:title")
         title = title_tag["content"] if title_tag else username
         title = title.replace("Telegram: Contact @", "").strip()
-        
-        desc_tag = soup.find("meta", property="og:description")
-        description = desc_tag["content"] if desc_tag else ""
-        
-        img_tag = soup.find("meta", property="og:image")
-        avatar = img_tag["content"] if img_tag else None
-        
-        return {
-            "username": username,
-            "title": title,
-            "description": description,
-            "avatar": avatar
-        }
+        return {"username": username, "title": title}
 
     async def get_posts(self, username: str, limit: int = 10) -> List[Dict]:
         url = f"https://t.me/s/{username}"
@@ -109,12 +148,6 @@ class TelegramScraper:
             return True
         return False
 
-    def _has_external_tme_links(self, text: str, current_username: str = None) -> bool:
-        links = re.findall(r'(?:https?://)?t\.me/([a-zA-Z0-9_]+)', text)
-        if current_username:
-            links = [l for l in links if l != current_username]
-        return len(links) > 0
-
     def _parse_message(self, msg_div, username: str) -> Optional[Dict]:
         data_post = msg_div.get("data-post")
         if not data_post:
@@ -140,7 +173,6 @@ class TelegramScraper:
         
         reactions = self._parse_reactions(msg_div)
         is_forwarded = self._is_forwarded(msg_div)
-        has_external_links = self._has_external_tme_links(text, username)
         
         has_photo = False
         has_video = False
@@ -148,7 +180,7 @@ class TelegramScraper:
         media_type = None
         video_duration = 0
         
-        # Способ 1: Одиночное фото
+        # Фото
         photo_wrap = msg_div.find("a", class_="tgme_widget_message_photo_wrap")
         if photo_wrap:
             has_photo = True
@@ -162,7 +194,7 @@ class TelegramScraper:
                 if bg_match:
                     media_url = bg_match.group(1)
         
-        # Способ 2: Галерея (несколько фото)
+        # Галерея
         if not has_photo:
             gallery = msg_div.find("div", class_="tgme_widget_message_album_wrap")
             if gallery:
@@ -173,13 +205,8 @@ class TelegramScraper:
                     img = first_photo.find("img")
                     if img:
                         media_url = img.get("src")
-                    if not media_url:
-                        style = first_photo.get("style", "")
-                        bg_match = re.search(r"url\('(.+?)'\)", style)
-                        if bg_match:
-                            media_url = bg_match.group(1)
         
-        # Способ 3: Обычное видео
+        # Видео
         if not has_photo:
             video = msg_div.find("video")
             if video:
@@ -188,14 +215,13 @@ class TelegramScraper:
                     has_video = True
                     media_type = "video"
                     media_url = src
-                    # Парсим длительность
                     duration_attr = video.get("duration", "0")
                     try:
                         video_duration = int(float(duration_attr))
                     except:
                         video_duration = 0
         
-        # Способ 4: Круглое видео
+        # Круглое видео
         if not has_photo and not has_video:
             round_video = msg_div.find("video", class_="tgme_widget_message_roundvideo")
             if round_video:
@@ -204,22 +230,11 @@ class TelegramScraper:
                     has_video = True
                     media_type = "video"
                     media_url = src
-                    # Парсим длительность круглого видео
                     duration_attr = round_video.get("duration", "0")
                     try:
                         video_duration = int(float(duration_attr))
                     except:
                         video_duration = 0
-        
-        # Способ 5: Ссылка-превью (YouTube и т.д.)
-        if not has_photo and not has_video:
-            link_preview = msg_div.find("a", class_="tgme_widget_message_link_preview")
-            if link_preview:
-                img = link_preview.find("img")
-                if img:
-                    has_photo = True
-                    media_type = "photo"
-                    media_url = img.get("src")
         
         return {
             "url": post_url,
@@ -235,7 +250,7 @@ class TelegramScraper:
             "video_duration": video_duration,
             "datetime": post_datetime,
             "is_forwarded": is_forwarded,
-            "has_external_links": has_external_links,
+            "has_external_links": False,
             "is_advertisement": False
         }
 
@@ -244,20 +259,17 @@ class TelegramScraper:
         
         reactions_div = msg_div.find("div", class_="tgme_widget_message_reactions")
         if not reactions_div:
-            reactions_div = msg_div.find("span", class_="tgme_widget_message_reactions")
-        if not reactions_div:
             return 0
         
-        for span in reactions_div.find_all("span"):
-            span_class = " ".join(span.get("class", []))
-            if "count" in span_class or "tgme_reaction" in span_class:
-                text = span.get_text(strip=True)
-                if text:
-                    match = re.search(r'[\d]+(?:[.,]\d+)?[KkMm]?$', text)
-                    if match:
-                        num = parse_number(match.group())
-                        if num > 0:
-                            total += num
+        for span in reactions_div.find_all("span", class_="tgme_reaction"):
+            text = span.get_text(strip=True)
+            if not text:
+                continue
+            match = re.search(r'[\d]+(?:[.,]\d+)?[KkMm]?$', text)
+            if match:
+                num = parse_number(match.group())
+                if num > 0:
+                    total += num
         
         if total == 0:
             scripts = msg_div.find_all("script", type="application/json")
@@ -298,10 +310,7 @@ class TelegramScraper:
     async def download_media(self, media_url: str, save_path: str) -> bool:
         try:
             if not media_url:
-                logger.warning("❌ download_media: empty URL")
                 return False
-            
-            logger.info(f"⬇️ Downloading {media_url[:100]}...")
             headers = {
                 "User-Agent": Config.SCRAPER_USER_AGENT,
                 "Referer": "https://t.me/",
@@ -310,14 +319,10 @@ class TelegramScraper:
                 if resp.status == 200:
                     content = await resp.read()
                     if len(content) < 100:
-                        logger.warning(f"❌ Downloaded file too small: {len(content)} bytes")
                         return False
                     with open(save_path, "wb") as f:
                         f.write(content)
-                    logger.info(f"✅ Downloaded {len(content)} bytes to {save_path}")
                     return True
-                else:
-                    logger.warning(f"❌ HTTP {resp.status} for {media_url[:100]}")
         except Exception as e:
-            logger.error(f"❌ Download failed: {e}")
+            logger.error(f"Download failed: {e}")
         return False
