@@ -73,22 +73,55 @@ async def main():
     auto_backup = AutoBackup(backup_service)
     auto_backup_task = asyncio.create_task(auto_backup.start())
     
+    # ============ ОБЩИЕ FALLBACK-КОМАНДЫ ============
+    # Доступны в любом диалоге — бот не зависнет
+    common_fallbacks = [
+        CommandHandler("start", start),
+        CommandHandler("help", help_command),
+        CommandHandler("my_projects", my_projects),
+        CommandHandler("my_sources", my_sources),
+        CommandHandler("my_targets", my_targets),
+        CommandHandler("status", status),
+        CommandHandler("project_stats", project_stats),
+        CommandHandler("parse", parse_now),
+        CommandHandler("queue", queue_status),
+        CommandHandler("postnow", post_now),
+        CommandHandler("admin", admin_panel),
+        CommandHandler("cancel", cancel),
+    ]
+    
     # ============ Conversation Handlers ============
     
     add_source_conv = ConversationHandler(
         entry_points=[CommandHandler("add_source", add_source_start)],
         states={
-            AWAITING_SOURCE_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_username)],
-            AWAITING_CRITERIA: [CallbackQueryHandler(add_source_criteria, pattern="^criteria_")],
-            AWAITING_VIEWS: [MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_views_input)],
-            AWAITING_REACTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_reactions_input)],
+            AWAITING_SOURCE_USERNAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_username),
+                *common_fallbacks,
+            ],
+            AWAITING_CRITERIA: [
+                CallbackQueryHandler(add_source_criteria, pattern="^criteria_"),
+                *common_fallbacks,
+            ],
+            AWAITING_VIEWS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_views_input),
+                *common_fallbacks,
+            ],
+            AWAITING_REACTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_reactions_input),
+                *common_fallbacks,
+            ],
             AWAITING_MEDIA_FILTER: [
                 CallbackQueryHandler(media_filter_callback, pattern="^media_"),
                 CallbackQueryHandler(duration_callback, pattern="^duration_"),
+                *common_fallbacks,
             ],
-            AWAITING_REMOVE_TEXT: [CallbackQueryHandler(remove_text_callback, pattern="^text_")],
+            AWAITING_REMOVE_TEXT: [
+                CallbackQueryHandler(remove_text_callback, pattern="^text_"),
+                *common_fallbacks,
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     add_target_conv = ConversationHandler(
@@ -97,42 +130,60 @@ async def main():
             CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$")
         ],
         states={
-            AWAITING_TARGET_FORWARD: [MessageHandler(filters.FORWARDED, add_target_forward)],
+            AWAITING_TARGET_FORWARD: [
+                MessageHandler(filters.FORWARDED, add_target_forward),
+                *common_fallbacks,
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     set_interval_conv = ConversationHandler(
         entry_points=[CommandHandler("set_interval", set_interval_start)],
         states={
-            AWAITING_INTERVAL: [CallbackQueryHandler(set_interval_callback, pattern="^interval_")]
+            AWAITING_INTERVAL: [
+                CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
+                *common_fallbacks,
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     set_post_interval_conv = ConversationHandler(
         entry_points=[CommandHandler("set_post_interval", set_post_interval_start)],
         states={
-            AWAITING_POST_INTERVAL: [CallbackQueryHandler(set_post_interval_callback, pattern="^post_")],
-            AWAITING_POST_START_TIME: [CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_")],
+            AWAITING_POST_INTERVAL: [
+                CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
+                *common_fallbacks,
+            ],
+            AWAITING_POST_START_TIME: [
+                CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"),
+                *common_fallbacks,
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     set_signature_conv = ConversationHandler(
         entry_points=[CommandHandler("set_signature", set_signature_start)],
         states={
-            AWAITING_SIGNATURE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input)]
+            AWAITING_SIGNATURE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
+                *common_fallbacks,
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     broadcast_conv = ConversationHandler(
         entry_points=[CommandHandler("broadcast", broadcast_start)],
         states={
-            AWAITING_BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)]
+            AWAITING_BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
+                *common_fallbacks,
+            ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=common_fallbacks
     )
     
     # ============ Command Handlers ============
