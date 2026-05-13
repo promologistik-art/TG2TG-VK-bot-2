@@ -282,8 +282,16 @@ class Scheduler:
         if posts_to_publish:
             logger.info(f"📤 Found {len(posts_to_publish)} posts to queue")
             
-            current_time = get_moscow_time().replace(tzinfo=None)
+            # === НОВАЯ ЛОГИКА РАСЧЁТА ВРЕМЕНИ ===
+            interval_minutes = max(
+                int(project.post_interval_hours * 60),
+                user.min_post_interval_minutes,
+                Config.MIN_POST_INTERVAL_MINUTES
+            )
             
+            msk_now = get_moscow_time().replace(tzinfo=None)
+            
+            # Берём время последнего поста в очереди (любой статус)
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(PostQueue).where(
@@ -293,16 +301,19 @@ class Scheduler:
                 last_queued = result.scalar_one_or_none()
             
             if last_queued:
-                last_time_msk = last_queued.scheduled_time + timedelta(hours=3)
-                next_time = last_time_msk if last_time_msk > current_time else current_time
+                last_msk = last_queued.scheduled_time + timedelta(hours=3)
+                # Первый новый пост = последний запланированный + интервал
+                next_time = last_msk + timedelta(minutes=interval_minutes)
+                # Если это время уже прошло — подгоняем к ближайшему будущему слоту
+                if next_time < msk_now:
+                    slots_passed = ((msk_now - next_time).total_seconds() / 60) // interval_minutes + 1
+                    next_time = next_time + timedelta(minutes=slots_passed * interval_minutes)
             else:
-                next_time = current_time
-            
-            interval_minutes = max(
-                int(project.post_interval_hours * 60),
-                user.min_post_interval_minutes,
-                Config.MIN_POST_INTERVAL_MINUTES
-            )
+                # Первый пост в очереди — привязываем к active_hours_start
+                start_hour = project.active_hours_start
+                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+                if next_time < msk_now:
+                    next_time = next_time + timedelta(days=1)
             
             for i, post in enumerate(posts_to_publish):
                 if i > 0:
