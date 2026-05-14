@@ -13,6 +13,141 @@ logger = logging.getLogger(__name__)
 AWAITING_POST_START_TIME = 17
 
 
+# ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА ============
+
+async def set_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point для настройки интервала парсинга из меню проекта."""
+    query = update.callback_query
+    await query.answer()
+    
+    project_id = int(query.data.replace("project_set_check_", ""))
+    context.user_data['temp_project_id'] = project_id
+    
+    telegram_id = update.effective_user.id
+    has_access, message, user = await check_user_access(telegram_id)
+    if not has_access:
+        await query.edit_message_text(message)
+        return ConversationHandler.END
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+    
+    min_interval = user.min_check_interval_minutes if not user.is_admin else 30
+    
+    all_intervals = [30, 60, 120, 180, 360, 720]
+    keyboard = []
+    row = []
+    for interval in all_intervals:
+        if interval >= min_interval or user.is_admin:
+            if interval < 60:
+                text = f"🕐 {interval} минут"
+            else:
+                hours = interval // 60
+                text = f"🕑 {hours} час"
+                if hours in [2, 3, 4]:
+                    text += "а"
+                elif hours > 4:
+                    text += "ов"
+            row.append(InlineKeyboardButton(text, callback_data=f"interval_{interval}"))
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+    if row:
+        keyboard.append(row)
+    
+    await query.edit_message_text(
+        f"⏰ <b>Интервал парсинга</b>\n\n"
+        f"Проект: {project.name}\n"
+        f"Текущий: {project.check_interval_minutes} мин\n"
+        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
+        f"Выберите новый интервал:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_INTERVAL
+
+
+async def set_post_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point для настройки интервала постинга из меню проекта."""
+    query = update.callback_query
+    await query.answer()
+    
+    project_id = int(query.data.replace("project_set_post_", ""))
+    context.user_data['temp_project_id'] = project_id
+    
+    telegram_id = update.effective_user.id
+    has_access, message, user = await check_user_access(telegram_id)
+    if not has_access:
+        await query.edit_message_text(message)
+        return ConversationHandler.END
+    
+    min_interval = user.min_post_interval_minutes if not user.is_admin else 15
+    
+    all_intervals = [15, 30, 60]
+    keyboard = []
+    for interval in all_intervals:
+        if interval >= min_interval or user.is_admin:
+            text = f"🕐 {interval} минут"
+            keyboard.append([InlineKeyboardButton(text, callback_data=f"post_{interval}")])
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+    
+    current_minutes = int(project.post_interval_hours * 60)
+    current_text = f"{current_minutes} минут"
+    
+    await query.edit_message_text(
+        f"📅 <b>Интервал между публикациями</b>\n\n"
+        f"Проект: {project.name}\n"
+        f"Текущий интервал: {current_text}\n"
+        f"Минимальный для вашего тарифа: {min_interval} мин\n\n"
+        f"<b>Шаг 1 из 2:</b> Выберите интервал:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_POST_INTERVAL
+
+
+async def set_signature_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point для настройки подписи из меню проекта."""
+    query = update.callback_query
+    await query.answer()
+    
+    project_id = int(query.data.replace("project_set_signature_", ""))
+    context.user_data['temp_project_id'] = project_id
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+    
+    current = project.signature or "не установлена"
+    current_display = get_display_text(current) if current != "не установлена" else current
+    
+    await query.edit_message_text(
+        f"✍️ <b>Подпись проекта «{project.name}»</b>\n\n"
+        f"<b>Текущая подпись:</b> {current_display}\n\n"
+        f"<b>Введите подпись:</b>\n\n"
+        f"📝 <b>Просто текст:</b>\n"
+        f"   <code>Мой канал</code>\n\n"
+        f"🔗 <b>Текст + ссылка (через | ):</b>\n"
+        f"   <code>Мой канал | https://t.me/username</code>\n\n"
+        f"🔗 <b>Текст со ссылкой или @username:</b>\n"
+        f"   <code>Сделано в https://t.me/username</code>\n"
+        f"   <code>Сделано в @username</code>\n"
+        f"   <i>Бот сам сделает ссылку кликабельной</i>\n\n"
+        f"🔗 <b>Только ссылка:</b>\n"
+        f"   <code>https://t.me/username</code>\n\n"
+        f"Отправьте <code>удалить</code> чтобы убрать подпись.\n"
+        f"/cancel — отмена",
+        parse_mode="HTML"
+    )
+    return AWAITING_SIGNATURE
+
+
+# ============ НАСТРОЙКА ИНТЕРВАЛА ПАРСИНГА ============
+
 async def set_interval_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройка интервала парсинга."""
     project = await require_project(update, context)

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список проектов с кнопками-названиями."""
     telegram_id = update.effective_user.id
     has_access, message, user = await check_user_access(telegram_id)
     current_project = await get_current_project(telegram_id, context)
@@ -28,59 +29,122 @@ async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not projects:
         can_create, limit_msg = await check_action_limit(user, "create_project")
         keyboard = None
-        create_text = ""
         if can_create or user.is_admin:
             keyboard = [[InlineKeyboardButton("➕ Создать проект", callback_data="create_project")]]
-        else:
-            create_text = f"\n\n{limit_msg}"
         
-        text = "📭 У вас пока нет проектов.\n\nПроект — это связка из источников и целевого канала.\nНапример: «Мемасы», «Книги», «Кино»" + create_text
+        text = "📭 У вас пока нет проектов.\n\nПроект — это связка из источников и целевого канала."
+        if not can_create and not user.is_admin:
+            text += f"\n\n{limit_msg}"
         
         if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
+            await update.callback_query.edit_message_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+            )
         else:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None)
+            await update.message.reply_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+            )
         return
     
     text = f"📁 <b>Ваши проекты</b> ({len(projects)} / {user.max_projects})\n\n"
-    if not has_access:
-        text += f"⚠️ {message}\n\n"
-    
-    keyboard = []
     
     for p in projects:
         sources_count = await get_sources_count(p.id)
         target = await get_project_target(p.id)
-        
         current_icon = "👉 " if current_project and p.id == current_project.id else ""
-        status_icon = "✅" if p.is_active else "❌"
-        
         target_name = target.channel_title if target else 'не задана'
         
-        text += f"{current_icon}{status_icon} <b>{p.name}</b>\n"
+        text += f"{current_icon}<b>{p.name}</b>\n"
         text += f"   📥 Источников: {sources_count}\n"
         text += f"   📤 Цель: {target_name}\n"
         text += f"   📊 Сегодня: {p.posts_parsed_today} / {p.posts_posted_today}\n\n"
-        
-        if not current_project or p.id != current_project.id:
-            keyboard.append([InlineKeyboardButton(f"✅ Выбрать «{p.name}»", callback_data=f"select_project_{p.id}")])
-        
-        keyboard.append([
-            InlineKeyboardButton(f"📊 Статистика", callback_data=f"stats_project_{p.id}"),
-            InlineKeyboardButton(f"❌ Удалить", callback_data=f"delete_project_{p.id}")
-        ])
+    
+    # Кнопки — только названия проектов
+    keyboard = []
+    for p in projects:
+        current_mark = "👉 " if current_project and p.id == current_project.id else ""
+        keyboard.append([InlineKeyboardButton(
+            f"{current_mark}{p.name}", callback_data=f"project_menu_{p.id}"
+        )])
     
     can_create, _ = await check_action_limit(user, "create_project")
     if len(projects) < user.max_projects and (can_create or user.is_admin):
         keyboard.append([InlineKeyboardButton("➕ Создать новый проект", callback_data="create_project")])
     
     if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        )
     else:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+        )
+
+
+async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню конкретного проекта."""
+    query = update.callback_query
+    await query.answer()
+    telegram_id = update.effective_user.id
+    
+    project_id = int(query.data.replace("project_menu_", ""))
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == project_id, Project.user_id == telegram_id)
+        )
+        project = result.scalar_one_or_none()
+    
+    if not project:
+        await query.edit_message_text("❌ Проект не найден")
+        return
+    
+    # Делаем проект текущим
+    context.user_data[CURRENT_PROJECT_KEY] = project.id
+    
+    sources_count = await get_sources_count(project.id)
+    target = await get_project_target(project.id)
+    
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(PostQueue).where(PostQueue.project_id == project.id, PostQueue.status == "pending")
+        )
+        pending = len(result.scalars().all())
+    
+    target_name = target.channel_title if target else 'не задана'
+    
+    text = (
+        f"📁 <b>Проект «{project.name}»</b>\n\n"
+        f"📥 Источников: {sources_count}\n"
+        f"📤 Цель: {target_name}\n"
+        f"⏰ Парсинг: каждые {project.check_interval_minutes} мин\n"
+        f"📅 Постинг: каждые {project.post_interval_hours} ч\n"
+        f"🕐 Активные часы: {project.active_hours_start}:00 – {project.active_hours_end}:00\n"
+        f"📊 Сегодня: спарсено {project.posts_parsed_today} / опубликовано {project.posts_posted_today}\n"
+        f"📬 В очереди: {pending}\n"
+    )
+    
+    if project.signature:
+        text += f"✍️ Подпись: {project.signature}\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 Статистика", callback_data=f"stats_project_{project.id}")],
+        [InlineKeyboardButton("📥 Источники", callback_data=f"project_sources_{project.id}")],
+        [InlineKeyboardButton("🎯 Сменить цель", callback_data=f"project_change_target_{project.id}")],
+        [InlineKeyboardButton("⏰ Интервал парсинга", callback_data=f"project_set_check_{project.id}")],
+        [InlineKeyboardButton("📅 Интервал постинга", callback_data=f"project_set_post_{project.id}")],
+        [InlineKeyboardButton("✍️ Подпись", callback_data=f"project_set_signature_{project.id}")],
+        [InlineKeyboardButton("❌ Удалить проект", callback_data=f"delete_project_{project.id}")],
+        [InlineKeyboardButton("◀️ Назад к проектам", callback_data="back_to_projects")],
+    ]
+    
+    await query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML"
+    )
 
 
 async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback'ов управления проектами."""
     query = update.callback_query
     await query.answer()
     telegram_id = update.effective_user.id
@@ -102,11 +166,56 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("select_project_"):
         project_id = int(data.replace("select_project_", ""))
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Project).where(Project.id == project_id, Project.user_id == telegram_id))
+            result = await session.execute(
+                select(Project).where(Project.id == project_id, Project.user_id == telegram_id)
+            )
             project = result.scalar_one_or_none()
         if project:
             context.user_data[CURRENT_PROJECT_KEY] = project.id
             await query.edit_message_text(f"✅ Выбран проект «{project.name}»")
+    
+    elif data.startswith("project_sources_"):
+        project_id = int(data.replace("project_sources_", ""))
+        context.user_data[CURRENT_PROJECT_KEY] = project_id
+        from .sources import my_sources
+        await my_sources(update, context)
+    
+    elif data.startswith("project_change_target_"):
+        project_id = int(data.replace("project_change_target_", ""))
+        context.user_data[CURRENT_PROJECT_KEY] = project_id
+        
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(TargetChannel).where(TargetChannel.project_id == project_id)
+            )
+            old_target = result.scalar_one_or_none()
+        
+        if old_target:
+            await session.execute(delete(TargetChannel).where(TargetChannel.id == old_target.id))
+            await session.commit()
+        
+        await query.edit_message_text(
+            "🎯 Старая цель удалена.\n\nИспользуйте /add_target чтобы добавить новую цель."
+        )
+    
+    elif data.startswith("project_set_check_"):
+        project_id = int(data.replace("project_set_check_", ""))
+        context.user_data['temp_project_id'] = project_id
+        from .settings import set_interval_start
+        # Создаём фейковый update с message
+        await set_interval_start(update, context)
+    
+    elif data.startswith("project_set_post_"):
+        project_id = int(data.replace("project_set_post_", ""))
+        context.user_data['temp_project_id'] = project_id
+        from .settings import set_post_interval_start
+        await set_post_interval_start(update, context)
+    
+    elif data.startswith("project_set_signature_"):
+        project_id = int(data.replace("project_set_signature_", ""))
+        context.user_data['temp_project_id'] = project_id
+        from .settings import set_signature_start
+        await set_signature_start(update, context)
     
     elif data.startswith("delete_project_"):
         project_id = int(data.replace("delete_project_", ""))
@@ -140,6 +249,7 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод названия нового проекта."""
     if not context.user_data.get('awaiting_project_name'):
         return
     
@@ -187,6 +297,7 @@ async def handle_project_name(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def show_project_stats(query, project_id: int):
+    """Показывает статистику проекта."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one()
@@ -212,9 +323,10 @@ async def show_project_stats(query, project_id: int):
         f"📬 В очереди: {pending}"
     )
     
-    keyboard = [[InlineKeyboardButton("◀️ Назад к проектам", callback_data="back_to_projects")]]
+    keyboard = [[InlineKeyboardButton("◀️ Назад к проекту", callback_data=f"project_menu_{project_id}")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
 async def back_to_projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к списку проектов."""
     await my_projects(update, context)
