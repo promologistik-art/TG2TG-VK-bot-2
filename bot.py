@@ -133,23 +133,28 @@ async def main():
         entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_")],
         states={
             AWAITING_EDIT_VIEWS: [
+                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
                 *common_fallbacks,
             ],
             AWAITING_EDIT_REACTIONS: [
+                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_reactions_input),
                 *common_fallbacks,
             ],
             AWAITING_MEDIA_FILTER: [
+                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
                 CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"),
                 CallbackQueryHandler(edit_duration_callback, pattern="^edit_duration_"),
                 *common_fallbacks,
             ],
             AWAITING_REMOVE_TEXT: [
+                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
                 CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"),
                 *common_fallbacks,
             ],
             AWAITING_EDIT_EXCLUDE_PHRASES: [
+                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exclude_phrases_input),
                 *common_fallbacks,
             ],
@@ -252,7 +257,7 @@ async def main():
     app.add_handler(CommandHandler("admin_extend_trial", admin_extend_trial_start))
     
     # ============ Callback Handlers (ДО ConversationHandlers) ============
-
+    
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
