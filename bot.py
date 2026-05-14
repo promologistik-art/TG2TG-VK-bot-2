@@ -102,17 +102,13 @@ async def main():
     app.add_handler(CommandHandler("admin_extend_trial", admin_extend_trial_start))
     app.add_handler(CommandHandler("cancel", cancel))
     
-    # ============ CallbackQueryHandlers (специфичные сначала) ============
-    app.add_handler(CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_"))
-    app.add_handler(CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_"))
-    app.add_handler(CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_"))
-    
+    # ============ CallbackQueryHandlers (только для проектов и источников) ============
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
     
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
-    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
+    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_|project_set_check_|project_set_post_|project_set_signature_)"))
     
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
