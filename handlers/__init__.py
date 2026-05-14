@@ -19,7 +19,7 @@ from .sources import (
     my_sources, edit_source_callback, delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input
+    edit_exclude_phrases_input, back_to_sources_callback
 )
 from .targets import (
     add_target_start, add_target_forward, add_target_continue_callback,

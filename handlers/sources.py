@@ -682,3 +682,12 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
         await session.execute(delete(SourceChannel).where(SourceChannel.id == source_id))
         await session.commit()
     await query.edit_message_text("✅ Источник удалён")
+
+
+# ============ ВОЗВРАТ К ИСТОЧНИКАМ ============
+
+async def back_to_sources_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к списку источников."""
+    query = update.callback_query
+    await query.answer()
+    await my_sources(update, context)

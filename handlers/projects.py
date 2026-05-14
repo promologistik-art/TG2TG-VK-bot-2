@@ -202,7 +202,6 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         project_id = int(data.replace("project_set_check_", ""))
         context.user_data['temp_project_id'] = project_id
         from .settings import set_interval_start
-        # Создаём фейковый update с message
         await set_interval_start(update, context)
     
     elif data.startswith("project_set_post_"):
@@ -329,4 +328,7 @@ async def show_project_stats(query, project_id: int):
 
 async def back_to_projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возвращает к списку проектов."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop(CURRENT_PROJECT_KEY, None)
     await my_projects(update, context)
