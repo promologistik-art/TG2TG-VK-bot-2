@@ -59,7 +59,6 @@ async def my_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"   📤 Цель: {target_name}\n"
         text += f"   📊 Сегодня: {p.posts_parsed_today} / {p.posts_posted_today}\n\n"
     
-    # Кнопки — только названия проектов
     keyboard = []
     for p in projects:
         current_mark = "👉 " if current_project and p.id == current_project.id else ""
@@ -99,7 +98,6 @@ async def project_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("❌ Проект не найден")
         return
     
-    # Делаем проект текущим
     context.user_data[CURRENT_PROJECT_KEY] = project.id
     
     sources_count = await get_sources_count(project.id)
@@ -201,20 +199,20 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("project_set_check_"):
         project_id = int(data.replace("project_set_check_", ""))
         context.user_data['temp_project_id'] = project_id
-        from .settings import set_interval_start
-        await set_interval_start(update, context)
+        from .settings import set_interval_start_callback
+        await set_interval_start_callback(update, context)
     
     elif data.startswith("project_set_post_"):
         project_id = int(data.replace("project_set_post_", ""))
         context.user_data['temp_project_id'] = project_id
-        from .settings import set_post_interval_start
-        await set_post_interval_start(update, context)
+        from .settings import set_post_interval_start_callback
+        await set_post_interval_start_callback(update, context)
     
     elif data.startswith("project_set_signature_"):
         project_id = int(data.replace("project_set_signature_", ""))
         context.user_data['temp_project_id'] = project_id
-        from .settings import set_signature_start
-        await set_signature_start(update, context)
+        from .settings import set_signature_start_callback
+        await set_signature_start_callback(update, context)
     
     elif data.startswith("delete_project_"):
         project_id = int(data.replace("delete_project_", ""))
