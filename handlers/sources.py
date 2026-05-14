@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 # ============ ДОБАВЛЕНИЕ ИСТОЧНИКА ============
 
 async def add_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Сохраняем текущий проект перед очисткой
     current_project = context.user_data.get(CURRENT_PROJECT_KEY)
     context.user_data.clear()
     if current_project:
@@ -365,6 +364,7 @@ async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("📷 Изменить тип контента", callback_data=f"edit_media_{source_id}")],
         [InlineKeyboardButton("📝 Изменить обработку текста", callback_data=f"edit_text_{source_id}")],
         [InlineKeyboardButton("🚫 Изменить стоп-фразы", callback_data=f"edit_phrases_{source_id}")],
+        [InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")],
         [InlineKeyboardButton("◀️ Назад к источникам", callback_data="back_to_sources")],
     ]
     
@@ -377,11 +377,23 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     data = query.data
-    source_id = context.user_data.get('edit_source_id')
     
-    if not source_id:
-        await query.edit_message_text("❌ Ошибка: источник не выбран")
+    # Обработка очистки стоп-фраз (без диалога)
+    if data.startswith("edit_clear_phrases_"):
+        source_id = int(data.replace("edit_clear_phrases_", ""))
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                sql_update(SourceChannel)
+                .where(SourceChannel.id == source_id)
+                .values(exclude_phrases=None)
+            )
+            await session.commit()
+        await query.edit_message_text("✅ Стоп-фразы очищены")
         return ConversationHandler.END
+    
+    # Остальные действия требуют диалога
+    source_id = int(data.split("_")[-1])
+    context.user_data['edit_source_id'] = source_id
     
     if data.startswith("edit_criteria_"):
         await query.edit_message_text(
@@ -413,12 +425,22 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return AWAITING_REMOVE_TEXT
     
     elif data.startswith("edit_phrases_"):
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
+            source = result.scalar_one()
+        
+        current = source.exclude_phrases or "нет"
+        
         await query.edit_message_text(
-            "🚫 <b>Стоп-фразы</b>\n\n"
-            "Введите фразы через запятую, которые нужно удалять из текста.\n"
-            "Например: реклама, спонсор, подпишись\n\n"
-            "Отправьте '-' чтобы очистить список.",
-            parse_mode="HTML"
+            f"🚫 <b>Стоп-фразы</b>\n\n"
+            f"Текущие: {current}\n\n"
+            f"Введите новые фразы через запятую.\n"
+            f"Например: реклама, спонсор, подпишись\n\n"
+            f"Или нажмите кнопку ниже чтобы очистить:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")
+            ]])
         )
         return AWAITING_EDIT_EXCLUDE_PHRASES
     
@@ -491,7 +513,6 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
         )
         return AWAITING_MEDIA_FILTER
     else:
-        # photo_only — сразу сохраняем
         source_id = context.user_data.get('edit_source_id')
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -503,6 +524,7 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
         
         await query.edit_message_text(f"✅ Тип контента обновлён: только фото")
         context.user_data.pop('edit_source_id', None)
+        context.user_data.pop('edit_media_filter', None)
         return ConversationHandler.END
 
 
