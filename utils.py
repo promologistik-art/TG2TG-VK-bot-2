@@ -3,6 +3,7 @@ from typing import Optional, Tuple, List
 from datetime import datetime, timedelta
 import pytz
 
+
 def extract_channel_username(text: str) -> Optional[str]:
     patterns = [
         r'(?:https?://)?t(?:elegram)?\.me/([a-zA-Z0-9_]+)',
@@ -48,35 +49,40 @@ def calculate_score(post: dict, criteria: dict, post_time: datetime = None) -> T
 
 
 def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
-    """Очищает текст поста от рекламных призывов, ссылок и подписей источников."""
+    """Очищает текст поста от рекламных призывов и ВСЕХ ссылок на Telegram."""
     if not text:
         return ""
     
-    # Удаляем @упоминания
-    text = re.sub(r'@\w+', '', text)
-    # Удаляем t.me ссылки
+    # ===== УДАЛЕНИЕ ВСЕХ ССЫЛОК НА TELEGRAM =====
+    # Удаляем t.me ссылки (любые, не только на источник)
     text = re.sub(r'(?:https?://)?t\.me/\S+', '', text)
-    # Удаляем HTTP ссылки
+    # Удаляем telegram.me ссылки
+    text = re.sub(r'(?:https?://)?telegram\.me/\S+', '', text)
+    # Удаляем @упоминания (любые каналы/пользователи)
+    text = re.sub(r'@[a-zA-Z0-9_]+', '', text)
+    # Удаляем HTTP/HTTPS ссылки
     text = re.sub(r'https?://\S+', '', text)
+    
     # Удаляем HTML-теги
     text = re.sub(r'<[^>]+>', '', text)
     
-    # Удаляем рекламные призывы
+    # ===== УДАЛЕНИЕ РЕКЛАМНЫХ ПРИЗЫВОВ =====
     ad_patterns = [
         r'[Пп]одписывай(?:те)?(?:сь)?\s*(?:на\s*)?(?:наш(?:и|у|его)?\s*)?(?:канал(?:ы|ов)?|паблик[и]?|сообщество|групп[уы])\s*(?:@?\w+\s*)?(?:[,.]?\s*(?:@?\w+\s*)*)*[.|!]?',
         r'[Сс]тавь(?:те)?\s*(?:лайк|👍|❤️?|🔥|класс)[^.]*\.?',
         r'[Пп]ереход(?:и|ите)?\s*по\s*ссылк[еи][^.]*\.?',
         r'[Пп]одпи(?:шись|сывайся|шитесь)[^.]*\.?',
         r'(?:MDK|MAX)\s*[|]\s*(?:MDK|MAX)',
+        r'📢\s*@?\w+\s*[➡️👉→]+\s*@?\w+',
+        r'Наши?\s*каналы?\s*[➡️👉→]*\s*@?\w+',
     ]
     for pattern in ad_patterns:
-        text = re.sub(pattern, '', text)
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
     # Убираем конструкции "канал1 | канал2" в конце текста
     text = re.sub(r'\s*[|]\s*@?\w+\s*$', '', text)
     
-    # === НОВОЕ: удаляем подписи источников со стрелками ===
-    # Удаляем строки вида "📢Название ➡️ @канал" или "📢Текст → Наши каналы"
+    # Удаляем подписи источников со стрелками
     text = re.sub(r'[📢📣🔔➡️👉⬇️👇→]+[^.!?\n]{0,150}$', '', text)
     text = re.sub(r'\s*➡️\s*\S+\s*$', '', text)
     text = re.sub(r'\s*→\s*\S+\s*$', '', text)
@@ -87,15 +93,15 @@ def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
     text = re.sub(r'\s*(?:Наши|Мои|Все)\s*каналы?\s*[➡️👉→]*\s*$', '', text)
     text = re.sub(r'\s*Подпишись\s*[➡️👉→]*\s*$', '', text)
     
-    # === НОВОЕ: стоп-фразы из настроек источника ===
+    # ===== СТОП-ФРАЗЫ ИЗ НАСТРОЕК ИСТОЧНИКА =====
     if exclude_phrases:
         for phrase in exclude_phrases:
             phrase = phrase.strip()
             if phrase:
-                # Экранируем специальные символы
                 escaped = re.escape(phrase)
                 text = re.sub(escaped, '', text, flags=re.IGNORECASE)
     
+    # ===== ОЧИСТКА ФОРМАТИРОВАНИЯ =====
     # Сохраняем структуру переносов
     text = re.sub(r'\n\s*\n', '\n\n', text)
     # Убираем множественные пробелы
@@ -110,6 +116,7 @@ def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
     text = re.sub(r'^\s*\n+', '', text)
     text = re.sub(r'\n+\s*$', '', text)
     
+    # Ограничение длины
     if len(text) > 1024:
         text = text[:1021] + "..."
     

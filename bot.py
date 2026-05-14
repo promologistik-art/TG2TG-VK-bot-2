@@ -19,7 +19,7 @@ from handlers import (
     my_sources, edit_source_callback, delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input,
+    edit_exclude_phrases_input, back_to_sources_callback,
     add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
@@ -79,162 +79,7 @@ async def main():
     auto_backup = AutoBackup(backup_service)
     auto_backup_task = asyncio.create_task(auto_backup.start())
     
-    # ============ ОБЩИЕ FALLBACK-КОМАНДЫ ============
-    common_fallbacks = [
-        CommandHandler("start", start),
-        CommandHandler("help", help_command),
-        CommandHandler("my_projects", my_projects),
-        CommandHandler("my_sources", my_sources),
-        CommandHandler("my_targets", my_targets),
-        CommandHandler("status", status),
-        CommandHandler("project_stats", project_stats),
-        CommandHandler("parse", parse_now),
-        CommandHandler("queue", queue_status),
-        CommandHandler("postnow", post_now),
-        CommandHandler("admin", admin_panel),
-        CommandHandler("cancel", cancel),
-    ]
-    
-    # ============ Conversation Handlers ============
-    
-    add_source_conv = ConversationHandler(
-        entry_points=[CommandHandler("add_source", add_source_start)],
-        states={
-            AWAITING_SOURCE_USERNAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_username),
-                *common_fallbacks,
-            ],
-            AWAITING_CRITERIA: [
-                CallbackQueryHandler(add_source_criteria, pattern="^criteria_"),
-                *common_fallbacks,
-            ],
-            AWAITING_VIEWS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_views_input),
-                *common_fallbacks,
-            ],
-            AWAITING_REACTIONS: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_reactions_input),
-                *common_fallbacks,
-            ],
-            AWAITING_MEDIA_FILTER: [
-                CallbackQueryHandler(media_filter_callback, pattern="^media_"),
-                CallbackQueryHandler(duration_callback, pattern="^duration_"),
-                *common_fallbacks,
-            ],
-            AWAITING_REMOVE_TEXT: [
-                CallbackQueryHandler(remove_text_callback, pattern="^text_"),
-                *common_fallbacks,
-            ],
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    edit_source_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_")],
-        states={
-            AWAITING_EDIT_VIEWS: [
-                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
-                *common_fallbacks,
-            ],
-            AWAITING_EDIT_REACTIONS: [
-                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_reactions_input),
-                *common_fallbacks,
-            ],
-            AWAITING_MEDIA_FILTER: [
-                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
-                CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"),
-                CallbackQueryHandler(edit_duration_callback, pattern="^edit_duration_"),
-                *common_fallbacks,
-            ],
-            AWAITING_REMOVE_TEXT: [
-                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
-                CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"),
-                *common_fallbacks,
-            ],
-            AWAITING_EDIT_EXCLUDE_PHRASES: [
-                CallbackQueryHandler(edit_source_start, pattern="^edit_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exclude_phrases_input),
-                *common_fallbacks,
-            ],
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    add_target_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("add_target", add_target_start),
-            CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$")
-        ],
-        states={
-            AWAITING_TARGET_FORWARD: [
-                MessageHandler(filters.FORWARDED, add_target_forward),
-                *common_fallbacks,
-            ],
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    set_interval_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_interval", set_interval_start),
-            CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_")
-        ],
-        states={
-            AWAITING_INTERVAL: [
-                CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
-                *common_fallbacks,
-            ]
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    set_post_interval_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_post_interval", set_post_interval_start),
-            CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_")
-        ],
-        states={
-            AWAITING_POST_INTERVAL: [
-                CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
-                *common_fallbacks,
-            ],
-            AWAITING_POST_START_TIME: [
-                CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"),
-                *common_fallbacks,
-            ],
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    set_signature_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("set_signature", set_signature_start),
-            CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_")
-        ],
-        states={
-            AWAITING_SIGNATURE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
-                *common_fallbacks,
-            ]
-        },
-        fallbacks=common_fallbacks
-    )
-    
-    broadcast_conv = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_start)],
-        states={
-            AWAITING_BROADCAST_MESSAGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
-                *common_fallbacks,
-            ]
-        },
-        fallbacks=common_fallbacks
-    )
-    
     # ============ Command Handlers ============
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("test", test_scraper))
@@ -255,20 +100,190 @@ async def main():
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(CommandHandler("admin_set_tariff", admin_set_tariff_start))
     app.add_handler(CommandHandler("admin_extend_trial", admin_extend_trial_start))
+    app.add_handler(CommandHandler("cancel", cancel))
     
-    # ============ Callback Handlers (ДО ConversationHandlers) ============
+    # ============ CallbackQueryHandlers (специфичные сначала) ============
+    app.add_handler(CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_"))
+    app.add_handler(CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_"))
+    app.add_handler(CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_"))
     
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
-    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_|project_set_check_|project_set_post_|project_set_signature_)"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
+    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
+    
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
-    app.add_handler(CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
+    app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
     
-    # ============ Conversation Handlers (register) ============
+    # ============ ConversationHandlers ============
+    add_source_conv = ConversationHandler(
+        entry_points=[CommandHandler("add_source", add_source_start)],
+        states={
+            AWAITING_SOURCE_USERNAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_source_username),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_CRITERIA: [
+                CallbackQueryHandler(add_source_criteria, pattern="^criteria_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_VIEWS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_views_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_REACTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, criteria_reactions_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_MEDIA_FILTER: [
+                CallbackQueryHandler(media_filter_callback, pattern="^media_"),
+                CallbackQueryHandler(duration_callback, pattern="^duration_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_REMOVE_TEXT: [
+                CallbackQueryHandler(remove_text_callback, pattern="^text_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    edit_source_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_")],
+        states={
+            AWAITING_EDIT_VIEWS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_EDIT_REACTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_reactions_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_MEDIA_FILTER: [
+                CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"),
+                CallbackQueryHandler(edit_duration_callback, pattern="^edit_duration_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_REMOVE_TEXT: [
+                CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_EDIT_EXCLUDE_PHRASES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exclude_phrases_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    add_target_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("add_target", add_target_start),
+            CallbackQueryHandler(add_target_continue_callback, pattern="^add_target_continue$")
+        ],
+        states={
+            AWAITING_TARGET_FORWARD: [
+                MessageHandler(filters.FORWARDED, add_target_forward),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    set_interval_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_interval", set_interval_start),
+            CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_")
+        ],
+        states={
+            AWAITING_INTERVAL: [
+                CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    set_post_interval_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_post_interval", set_post_interval_start),
+            CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_")
+        ],
+        states={
+            AWAITING_POST_INTERVAL: [
+                CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+            AWAITING_POST_START_TIME: [
+                CallbackQueryHandler(set_post_start_time_callback, pattern="^starttime_"),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    set_signature_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("set_signature", set_signature_start),
+            CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_")
+        ],
+        states={
+            AWAITING_SIGNATURE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    broadcast_conv = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start)],
+        states={
+            AWAITING_BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
     
     app.add_handler(add_source_conv)
     app.add_handler(edit_source_conv)
@@ -277,8 +292,6 @@ async def main():
     app.add_handler(set_post_interval_conv)
     app.add_handler(set_signature_conv)
     app.add_handler(broadcast_conv)
-    
-    # ============ Message Handlers ============
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
     

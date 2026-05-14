@@ -46,42 +46,33 @@ class Scheduler:
     async def _send_daily_report(self):
         try:
             async with AsyncSessionLocal() as session:
-                # Пользователи
                 result = await session.execute(select(User))
                 users = result.scalars().all()
                 users_count = len(users)
                 
-                # Проекты
                 result = await session.execute(select(Project).where(Project.is_active == True))
                 projects = result.scalars().all()
                 projects_count = len(projects)
                 
-                # Источники
                 result = await session.execute(
                     select(SourceChannel).where(SourceChannel.is_active == True)
                 )
                 sources = result.scalars().all()
                 sources_count = len(sources)
                 
-                # Спарсено сегодня
                 total_parsed = sum(p.posts_parsed_today for p in projects)
-                
-                # Опубликовано сегодня
                 total_posted = sum(p.posts_posted_today for p in projects)
                 
-                # В очереди
                 result = await session.execute(
                     select(PostQueue).where(PostQueue.status == "pending")
                 )
                 pending = len(result.scalars().all())
                 
-                # Ошибок
                 result = await session.execute(
                     select(PostQueue).where(PostQueue.status == "failed")
                 )
                 failed = len(result.scalars().all())
                 
-                # Топ-3 активных проекта
                 sorted_projects = sorted(projects, key=lambda p: p.posts_posted_today, reverse=True)
                 top3 = sorted_projects[:3]
             
@@ -210,23 +201,30 @@ class Scheduler:
                     if await is_post_parsed(project.id, post["url"]):
                         continue
                     
-                    # Фильтр по типу медиа (первый уровень — жёсткий)
-                    if source.media_filter == "photo_only":
-                        if not post.get("has_media") or post.get("media_type") != "photo":
-                            continue
-                    if source.media_filter == "video_only":
-                        if not post.get("has_media") or post.get("media_type") != "video":
-                            continue
-                    
                     # Пропускаем рекламу
                     if post.get("is_advertisement", False):
                         continue
+                    
+                    # ЖЁСТКАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА (первичная)
+                    media_type = post.get("media_type")
+                    has_media = post.get("has_media", False)
+                    
+                    if source.media_filter == "photo_only":
+                        if not has_media or media_type != "photo":
+                            logger.debug(f"⏭️ Skipping @{source.channel_username}: not a photo (type={media_type})")
+                            continue
+                    
+                    elif source.media_filter == "video_only":
+                        if not has_media or media_type != "video":
+                            logger.debug(f"⏭️ Skipping @{source.channel_username}: not a video (type={media_type})")
+                            continue
                     
                     post["source_username"] = source.channel_username
                     post["source_title"] = source.channel_title
                     post["media_filter"] = source.media_filter
                     post["remove_original_text"] = source.remove_original_text
                     post["max_video_duration"] = source.max_video_duration
+                    post["exclude_phrases"] = source.exclude_phrases
                     
                     post_time = datetime.utcnow()
                     if post.get("datetime"):
@@ -247,42 +245,44 @@ class Scheduler:
                 if best_post:
                     # Проверка длительности видео
                     if source.max_video_duration and source.max_video_duration > 0:
-                        if best_post.get("media_type") == "video":
-                            video_dur = best_post.get("video_duration", 0)
-                            if video_dur > 0 and video_dur > source.max_video_duration:
-                                logger.info(
-                                    f"⏰ Video too long from @{source.channel_username}: "
-                                    f"{video_dur}s > {source.max_video_duration}s max"
-                                )
-                                continue
+                        video_dur = best_post.get("video_duration", 0)
+                        if video_dur > 0 and video_dur > source.max_video_duration:
+                            logger.info(
+                                f"⏰ Video too long from @{source.channel_username}: "
+                                f"{video_dur}s > {source.max_video_duration}s max"
+                            )
+                            continue
                     
-                    # УСИЛЕННАЯ проверка фильтра (второй уровень)
-                    if source.media_filter == "photo_only" and best_post.get("media_type") != "photo":
-                        logger.info(
-                            f"⚠️ Skipping non-photo post from @{source.channel_username}: "
-                            f"type={best_post.get('media_type')}"
-                        )
-                        continue
-                    if source.media_filter == "video_only" and best_post.get("media_type") != "video":
-                        logger.info(
-                            f"⚠️ Skipping non-video post from @{source.channel_username}: "
-                            f"type={best_post.get('media_type')}"
-                        )
-                        continue
-                    if source.media_filter in ("photo_only", "video_only") and not best_post.get("has_media"):
-                        logger.info(f"⚠️ Skipping no-media post from @{source.channel_username}")
-                        continue
+                    # ПОВТОРНАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА (после выбора лучшего поста)
+                    media_type = best_post.get("media_type")
+                    has_media = best_post.get("has_media", False)
+                    
+                    if source.media_filter == "photo_only":
+                        if not has_media or media_type != "photo":
+                            logger.info(
+                                f"⚠️ FINAL CHECK FAIL: @{source.channel_username} "
+                                f"media_filter=photo_only but post has media={has_media}, type={media_type}"
+                            )
+                            continue
+                    
+                    elif source.media_filter == "video_only":
+                        if not has_media or media_type != "video":
+                            logger.info(
+                                f"⚠️ FINAL CHECK FAIL: @{source.channel_username} "
+                                f"media_filter=video_only but post has media={has_media}, type={media_type}"
+                            )
+                            continue
                     
                     logger.info(
                         f"🏆 Selected from @{source.channel_username}: "
-                        f"score={best_score}, type={best_post.get('media_type')}, "
+                        f"score={best_score}, type={media_type}, "
                         f"duration={best_post.get('video_duration', 0)}s"
                     )
                     
                     await mark_post_parsed(project.id, source.id, best_post["url"])
                     total_parsed += 1
                     
-                    # === СКАЧИВАНИЕ МЕДИА ===
+                    # СКАЧИВАНИЕ МЕДИА
                     media_downloaded = False
                     if best_post.get("has_media") and best_post.get("media_url"):
                         ext = "jpg" if best_post.get("media_type") == "photo" else "mp4"
@@ -295,26 +295,24 @@ class Scheduler:
                             logger.info(f"💾 Media saved: {media_path}")
                         else:
                             logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
-                    elif best_post.get("has_media") and not best_post.get("media_url"):
-                        logger.warning(f"⚠️ Media flagged but no URL for @{source.channel_username}")
                     
-                    # === КРИТИЧЕСКАЯ ПРОВЕРКА: media_filter требует медиа ===
+                    # КРИТИЧЕСКАЯ ПРОВЕРКА: media_filter требует медиа, но медиа не скачалось
                     if source.media_filter in ("photo_only", "video_only"):
                         if not media_downloaded:
                             logger.info(
-                                f"🚫 BLOCKED: media_filter={source.media_filter} but no media downloaded "
+                                f"🚫 BLOCKED: media_filter={source.media_filter} but media download failed "
                                 f"for @{source.channel_username}"
                             )
                             continue
                     
-                    # === ПРОВЕРКА: remove_original_text без медиа ===
+                    # ПРОВЕРКА: remove_original_text без медиа
                     if source.remove_original_text and not media_downloaded:
                         logger.info(
                             f"📝 Skipping post (text removed, no media) from @{source.channel_username}"
                         )
                         continue
                     
-                    # === ПРОВЕРКА: пустой пост ===
+                    # ПРОВЕРКА: пустой пост
                     has_text = bool(best_post.get("text", "").strip())
                     if not has_text and not media_downloaded:
                         logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
@@ -335,7 +333,6 @@ class Scheduler:
         if posts_to_publish:
             logger.info(f"📤 Found {len(posts_to_publish)} posts to queue")
             
-            # === НОВАЯ ЛОГИКА РАСЧЁТА ВРЕМЕНИ ===
             interval_minutes = max(
                 int(project.post_interval_hours * 60),
                 user.min_post_interval_minutes,
@@ -344,7 +341,6 @@ class Scheduler:
             
             msk_now = get_moscow_time().replace(tzinfo=None)
             
-            # Берём время последнего поста в очереди (любой статус)
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
                     select(PostQueue).where(
@@ -355,14 +351,11 @@ class Scheduler:
             
             if last_queued:
                 last_msk = last_queued.scheduled_time + timedelta(hours=3)
-                # Первый новый пост = последний запланированный + интервал
                 next_time = last_msk + timedelta(minutes=interval_minutes)
-                # Если это время уже прошло — подгоняем к ближайшему будущему слоту
                 if next_time < msk_now:
                     slots_passed = ((msk_now - next_time).total_seconds() / 60) // interval_minutes + 1
                     next_time = next_time + timedelta(minutes=slots_passed * interval_minutes)
             else:
-                # Первый пост в очереди — привязываем к active_hours_start
                 start_hour = project.active_hours_start
                 next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
                 if next_time < msk_now:
