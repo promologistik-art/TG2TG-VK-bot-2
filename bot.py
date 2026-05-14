@@ -129,9 +129,8 @@ async def main():
         fallbacks=common_fallbacks
     )
     
-    # ConversationHandler для редактирования источника
     edit_source_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases)_")],
+        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_")],
         states={
             AWAITING_EDIT_VIEWS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
@@ -252,6 +251,17 @@ async def main():
     app.add_handler(CommandHandler("admin_set_tariff", admin_set_tariff_start))
     app.add_handler(CommandHandler("admin_extend_trial", admin_extend_trial_start))
     
+    # ============ Callback Handlers (ДО ConversationHandlers) ============
+    
+    app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
+    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_|project_set_check_|project_set_post_|project_set_signature_)"))
+    app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
+    app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
+    app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
+    app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
+    
     # ============ Conversation Handlers (register) ============
     
     app.add_handler(add_source_conv)
@@ -265,17 +275,6 @@ async def main():
     # ============ Message Handlers ============
     
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_project_name))
-    
-    # ============ Callback Handlers ============
-    
-    app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
-    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
-    app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
-    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_|project_set_check_|project_set_post_|project_set_signature_)"))
-    app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
-    app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
-    app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
-    app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     
     await app.initialize()
     await app.start()
