@@ -61,6 +61,7 @@ class SourceChannel(Base):
     media_filter = Column(String, default="all")
     remove_original_text = Column(Boolean, default=False)
     max_video_duration = Column(Integer, nullable=True)
+    exclude_phrases = Column(String, nullable=True)  # Новое поле: стоп-фразы через запятую
     is_active = Column(Boolean, default=True)
     added_at = Column(DateTime, default=datetime.utcnow)
     last_parsed = Column(DateTime, nullable=True)

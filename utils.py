@@ -1,5 +1,5 @@
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from datetime import datetime, timedelta
 import pytz
 
@@ -47,7 +47,8 @@ def calculate_score(post: dict, criteria: dict, post_time: datetime = None) -> T
         return (-1, True)
 
 
-def clean_caption(text: str) -> str:
+def clean_caption(text: str, exclude_phrases: List[str] = None) -> str:
+    """Очищает текст поста от рекламных призывов, ссылок и подписей источников."""
     if not text:
         return ""
     
@@ -74,6 +75,27 @@ def clean_caption(text: str) -> str:
     # Убираем конструкции "канал1 | канал2" в конце текста
     text = re.sub(r'\s*[|]\s*@?\w+\s*$', '', text)
     
+    # === НОВОЕ: удаляем подписи источников со стрелками ===
+    # Удаляем строки вида "📢Название ➡️ @канал" или "📢Текст → Наши каналы"
+    text = re.sub(r'[📢📣🔔➡️👉⬇️👇→]+[^.!?\n]{0,150}$', '', text)
+    text = re.sub(r'\s*➡️\s*\S+\s*$', '', text)
+    text = re.sub(r'\s*→\s*\S+\s*$', '', text)
+    text = re.sub(r'\s*⬇️\s*\S+\s*$', '', text)
+    text = re.sub(r'\s*👇\s*\S+\s*$', '', text)
+    
+    # Удаляем "Наши каналы", "Подпишись", "Присоединяйся" в конце
+    text = re.sub(r'\s*(?:Наши|Мои|Все)\s*каналы?\s*[➡️👉→]*\s*$', '', text)
+    text = re.sub(r'\s*Подпишись\s*[➡️👉→]*\s*$', '', text)
+    
+    # === НОВОЕ: стоп-фразы из настроек источника ===
+    if exclude_phrases:
+        for phrase in exclude_phrases:
+            phrase = phrase.strip()
+            if phrase:
+                # Экранируем специальные символы
+                escaped = re.escape(phrase)
+                text = re.sub(escaped, '', text, flags=re.IGNORECASE)
+    
     # Сохраняем структуру переносов
     text = re.sub(r'\n\s*\n', '\n\n', text)
     # Убираем множественные пробелы
@@ -83,6 +105,10 @@ def clean_caption(text: str) -> str:
     text = re.sub(r'\!([А-ЯA-Z])', r'! \1', text)
     text = re.sub(r'\?([А-ЯA-Z])', r'? \1', text)
     text = text.strip()
+    
+    # Убираем пустые строки в начале и конце
+    text = re.sub(r'^\s*\n+', '', text)
+    text = re.sub(r'\n+\s*$', '', text)
     
     if len(text) > 1024:
         text = text[:1021] + "..."

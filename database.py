@@ -72,6 +72,7 @@ async def migrate_to_projects():
             "ALTER TABLE source_channels ADD COLUMN media_filter TEXT DEFAULT 'all'",
             "ALTER TABLE source_channels ADD COLUMN remove_original_text BOOLEAN DEFAULT FALSE",
             "ALTER TABLE source_channels ADD COLUMN max_video_duration INTEGER",
+            "ALTER TABLE source_channels ADD COLUMN exclude_phrases TEXT",
             "ALTER TABLE target_channels ADD COLUMN platform TEXT DEFAULT 'telegram'",
             "ALTER TABLE target_channels ADD COLUMN vk_token TEXT",
             "ALTER TABLE target_channels ADD COLUMN vk_group_id BIGINT",

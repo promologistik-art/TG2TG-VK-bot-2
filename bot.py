@@ -11,18 +11,23 @@ from config import Config
 from database import init_db
 from handlers import (
     start, help_command, cancel,
-    my_projects, projects_callback, handle_project_name,
+    my_projects, projects_callback, project_menu_callback, handle_project_name,
     back_to_projects_callback,
     add_source_start, add_source_username, add_source_criteria,
     criteria_views_input, criteria_reactions_input,
     media_filter_callback, duration_callback, remove_text_callback,
-    my_sources, delete_source_callback,
+    my_sources, edit_source_callback, delete_source_callback,
+    edit_source_start, edit_views_input, edit_reactions_input,
+    edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
+    edit_exclude_phrases_input,
     add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
     set_post_interval_start, set_post_interval_callback,
     set_post_start_time_callback,
     set_signature_start, set_signature_input,
+    set_interval_start_callback, set_post_interval_start_callback,
+    set_signature_start_callback,
     status, project_stats,
     parse_now, queue_status, post_now,
     clear_old_queue, clear_failed_queue, clear_all_queue, clear_project_queue,
@@ -36,6 +41,7 @@ from handlers import (
     AWAITING_INTERVAL, AWAITING_VIEWS, AWAITING_REACTIONS, AWAITING_SIGNATURE,
     AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
+    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
     AWAITING_BROADCAST_MESSAGE
 )
 
@@ -74,7 +80,6 @@ async def main():
     auto_backup_task = asyncio.create_task(auto_backup.start())
     
     # ============ ОБЩИЕ FALLBACK-КОМАНДЫ ============
-    # Доступны в любом диалоге — бот не зависнет
     common_fallbacks = [
         CommandHandler("start", start),
         CommandHandler("help", help_command),
@@ -124,6 +129,35 @@ async def main():
         fallbacks=common_fallbacks
     )
     
+    # ConversationHandler для редактирования источника
+    edit_source_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases)_")],
+        states={
+            AWAITING_EDIT_VIEWS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
+                *common_fallbacks,
+            ],
+            AWAITING_EDIT_REACTIONS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_reactions_input),
+                *common_fallbacks,
+            ],
+            AWAITING_MEDIA_FILTER: [
+                CallbackQueryHandler(edit_media_filter_callback, pattern="^edit_media_"),
+                CallbackQueryHandler(edit_duration_callback, pattern="^edit_duration_"),
+                *common_fallbacks,
+            ],
+            AWAITING_REMOVE_TEXT: [
+                CallbackQueryHandler(edit_remove_text_callback, pattern="^edit_text_"),
+                *common_fallbacks,
+            ],
+            AWAITING_EDIT_EXCLUDE_PHRASES: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exclude_phrases_input),
+                *common_fallbacks,
+            ],
+        },
+        fallbacks=common_fallbacks
+    )
+    
     add_target_conv = ConversationHandler(
         entry_points=[
             CommandHandler("add_target", add_target_start),
@@ -139,7 +173,10 @@ async def main():
     )
     
     set_interval_conv = ConversationHandler(
-        entry_points=[CommandHandler("set_interval", set_interval_start)],
+        entry_points=[
+            CommandHandler("set_interval", set_interval_start),
+            CallbackQueryHandler(set_interval_start_callback, pattern="^project_set_check_")
+        ],
         states={
             AWAITING_INTERVAL: [
                 CallbackQueryHandler(set_interval_callback, pattern="^interval_"),
@@ -150,7 +187,10 @@ async def main():
     )
     
     set_post_interval_conv = ConversationHandler(
-        entry_points=[CommandHandler("set_post_interval", set_post_interval_start)],
+        entry_points=[
+            CommandHandler("set_post_interval", set_post_interval_start),
+            CallbackQueryHandler(set_post_interval_start_callback, pattern="^project_set_post_")
+        ],
         states={
             AWAITING_POST_INTERVAL: [
                 CallbackQueryHandler(set_post_interval_callback, pattern="^post_"),
@@ -165,7 +205,10 @@ async def main():
     )
     
     set_signature_conv = ConversationHandler(
-        entry_points=[CommandHandler("set_signature", set_signature_start)],
+        entry_points=[
+            CommandHandler("set_signature", set_signature_start),
+            CallbackQueryHandler(set_signature_start_callback, pattern="^project_set_signature_")
+        ],
         states={
             AWAITING_SIGNATURE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, set_signature_input),
@@ -212,6 +255,7 @@ async def main():
     # ============ Conversation Handlers (register) ============
     
     app.add_handler(add_source_conv)
+    app.add_handler(edit_source_conv)
     app.add_handler(add_target_conv)
     app.add_handler(set_interval_conv)
     app.add_handler(set_post_interval_conv)
@@ -226,8 +270,10 @@ async def main():
     
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
-    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_)"))
+    app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
+    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_|project_set_check_|project_set_post_|project_set_signature_)"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
+    app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     
