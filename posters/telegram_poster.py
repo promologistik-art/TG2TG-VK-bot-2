@@ -66,7 +66,14 @@ class TelegramPoster:
         post_data = queue_item.post_data
         
         remove_text = post_data.get("remove_original_text", False)
-        original_text = clean_caption(post_data.get("text", ""))
+        
+        # === ФИКС: передаём exclude_phrases в clean_caption ===
+        exclude_phrases_str = post_data.get("exclude_phrases", "")
+        if exclude_phrases_str:
+            exclude_phrases = [p.strip() for p in exclude_phrases_str.split(",") if p.strip()]
+        else:
+            exclude_phrases = None
+        original_text = clean_caption(post_data.get("text", ""), exclude_phrases)
         
         if remove_text:
             caption = ""
