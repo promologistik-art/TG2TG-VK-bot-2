@@ -67,12 +67,12 @@ class TelegramPoster:
         
         remove_text = post_data.get("remove_original_text", False)
         
-        # === ФИКС: передаём exclude_phrases в clean_caption ===
         exclude_phrases_str = post_data.get("exclude_phrases", "")
         if exclude_phrases_str:
             exclude_phrases = [p.strip() for p in exclude_phrases_str.split(",") if p.strip()]
         else:
             exclude_phrases = None
+        
         original_text = clean_caption(post_data.get("text", ""), exclude_phrases)
         
         if remove_text:
@@ -99,15 +99,27 @@ class TelegramPoster:
         media_path = post_data.get("media_path")
         media_type = post_data.get("media_type")
         
-        # ЗАЩИТА: не публикуем если только подпись без медиа и без оригинального текста
         has_media = media_path and os.path.exists(media_path)
         has_original_text = bool(original_text.strip())
         
+        # ЗАЩИТА: не публикуем если только подпись без медиа и без оригинального текста
         if not has_media and not has_original_text:
             await self._mark_failed(queue_item, "Нет медиа и нет текста — только подпись")
             return False
         
-        # УЛУЧШЕННАЯ проверка parse_mode — только если есть реальные HTML-теги
+        # ПОВТОРНАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА ПРИ ПУБЛИКАЦИИ
+        media_filter = post_data.get("media_filter", "all")
+        
+        if media_filter == "photo_only":
+            if not has_media or media_type != "photo":
+                await self._mark_failed(queue_item, f"Фильтр: только фото, но медиа отсутствует или тип {media_type}")
+                return False
+        
+        elif media_filter == "video_only":
+            if not has_media or media_type != "video":
+                await self._mark_failed(queue_item, f"Фильтр: только видео, но медиа отсутствует или тип {media_type}")
+                return False
+        
         html_tags = ["<a href=", "<b>", "<i>", "<code>", "<s>", "<u>", "<pre>", "<blockquote>"]
         parse_mode = None
         if caption and any(tag in caption for tag in html_tags):
@@ -148,7 +160,6 @@ class TelegramPoster:
                 error_str = str(e).lower()
                 logger.error(f"Failed to send media: {e}")
                 
-                # Если ошибка из-за parse_mode — пробуем без
                 if parse_mode and "parse" in error_str:
                     try:
                         with open(media_path, "rb") as f:
@@ -176,7 +187,6 @@ class TelegramPoster:
                     except:
                         pass
                 
-                # Если медиа не отправилось — пробуем отправить только текст
                 if caption:
                     try:
                         await self.bot.send_message(
@@ -261,3 +271,6 @@ class TelegramPoster:
             )
             await session.commit()
             logger.warning(f"❌ Post {queue_item.id} failed: {clean_error}")
+
+    async def stop(self):
+        logger.info("🔴 TelegramPoster stopped")
