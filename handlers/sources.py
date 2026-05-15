@@ -329,7 +329,13 @@ async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer()
     
     source_id = int(query.data.replace("edit_source_", ""))
+    context.user_data['edit_source_id'] = source_id
     
+    await show_edit_source_menu(query, source_id)
+
+
+async def show_edit_source_menu(query, source_id: int):
+    """Отображает меню редактирования источника (может быть вызвано после изменения параметров)."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
         source = result.scalar_one_or_none()
@@ -337,8 +343,6 @@ async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     if not source:
         await query.edit_message_text("❌ Источник не найден")
         return
-    
-    context.user_data['edit_source_id'] = source_id
     
     filter_names = {"all": "все", "photo_only": "только фото", "video_only": "только видео"}
     
@@ -378,7 +382,7 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # Обработка очистки стоп-фраз (без диалога)
+    # Обработка очистки стоп-фраз (без диалога) - возвращаемся в меню редактирования
     if data.startswith("edit_clear_phrases_"):
         source_id = int(data.replace("edit_clear_phrases_", ""))
         async with AsyncSessionLocal() as session:
@@ -388,7 +392,7 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 .values(exclude_phrases=None)
             )
             await session.commit()
-        await query.edit_message_text("✅ Стоп-фразы очищены")
+        await show_edit_source_menu(query, source_id)
         return ConversationHandler.END
     
     # Остальные действия требуют диалога
@@ -487,7 +491,35 @@ async def edit_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await session.commit()
     
+    # После обновления критериев возвращаемся в меню редактирования
     await update.message.reply_text("✅ Критерии обновлены!")
+    
+    # Создаём фейковый callback_query для вызова меню
+    class FakeQuery:
+        def __init__(self, chat_id, message_id, bot):
+            self.message = type('obj', (object,), {
+                'chat_id': chat_id,
+                'message_id': message_id
+            })
+            self.bot = bot
+        async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+            await self.bot.edit_message_text(
+                text=text,
+                chat_id=self.message.chat_id,
+                message_id=self.message.message_id,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        async def answer(self):
+            pass
+    
+    fake_query = FakeQuery(
+        update.message.chat_id,
+        update.message.message_id - 1,
+        context.bot
+    )
+    
+    await show_edit_source_menu(fake_query, source_id)
     
     context.user_data.pop('edit_views', None)
     context.user_data.pop('edit_source_id', None)
@@ -523,6 +555,8 @@ async def edit_media_filter_callback(update: Update, context: ContextTypes.DEFAU
             await session.commit()
         
         await query.edit_message_text(f"✅ Тип контента обновлён: только фото")
+        await show_edit_source_menu(query, source_id)
+        
         context.user_data.pop('edit_source_id', None)
         context.user_data.pop('edit_media_filter', None)
         return ConversationHandler.END
@@ -548,6 +582,7 @@ async def edit_duration_callback(update: Update, context: ContextTypes.DEFAULT_T
     dur_text = f"до {duration}с" if duration else "без ограничений"
     filter_text = {"all": "все", "video_only": "только видео"}.get(media_filter, media_filter)
     await query.edit_message_text(f"✅ Обновлено: {filter_text}, {dur_text}")
+    await show_edit_source_menu(query, source_id)
     
     context.user_data.pop('edit_source_id', None)
     context.user_data.pop('edit_media_filter', None)
@@ -571,6 +606,8 @@ async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAUL
         await session.commit()
     
     await query.edit_message_text(f"✅ Текст: {'удаляется' if remove_text else 'оставляется'}")
+    await show_edit_source_menu(query, source_id)
+    
     context.user_data.pop('edit_source_id', None)
     return ConversationHandler.END
 
@@ -594,6 +631,33 @@ async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text(f"✅ Стоп-фразы обновлены: {text}")
     else:
         await update.message.reply_text("✅ Стоп-фразы очищены")
+    
+    # Создаём фейковый callback_query для вызова меню
+    class FakeQuery:
+        def __init__(self, chat_id, message_id, bot):
+            self.message = type('obj', (object,), {
+                'chat_id': chat_id,
+                'message_id': message_id
+            })
+            self.bot = bot
+        async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+            await self.bot.edit_message_text(
+                text=text,
+                chat_id=self.message.chat_id,
+                message_id=self.message.message_id,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        async def answer(self):
+            pass
+    
+    fake_query = FakeQuery(
+        update.message.chat_id,
+        update.message.message_id - 1,
+        context.bot
+    )
+    
+    await show_edit_source_menu(fake_query, source_id)
     
     context.user_data.pop('edit_source_id', None)
     return ConversationHandler.END
