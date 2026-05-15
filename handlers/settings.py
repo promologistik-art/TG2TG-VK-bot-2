@@ -13,6 +13,50 @@ logger = logging.getLogger(__name__)
 AWAITING_POST_START_TIME = 17
 
 
+# ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+
+async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, project_id: int):
+    """Показывает меню проекта (вызывается после изменения настроек)."""
+    from .projects import project_menu_callback
+    
+    # Создаём фейковый callback_query для вызова project_menu_callback
+    class FakeQuery:
+        def __init__(self, chat_id, message_id, bot, data):
+            self.message = type('obj', (object,), {
+                'chat_id': chat_id,
+                'message_id': message_id
+            })
+            self.bot = bot
+            self.data = data
+        async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+            await self.bot.edit_message_text(
+                text=text,
+                chat_id=self.message.chat_id,
+                message_id=self.message.message_id,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        async def answer(self):
+            pass
+    
+    fake_query = FakeQuery(
+        update.effective_chat.id,
+        update.effective_message.message_id,
+        context.bot,
+        f"project_menu_{project_id}"
+    )
+    
+    # Создаём фейковый update
+    class FakeUpdate:
+        def __init__(self, query, effective_user):
+            self.callback_query = query
+            self.effective_user = effective_user
+    
+    fake_update = FakeUpdate(fake_query, update.effective_user)
+    
+    await project_menu_callback(fake_update, context)
+
+
 # ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА ============
 
 async def set_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -226,6 +270,10 @@ async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await session.commit()
     
     await query.edit_message_text(f"✅ Интервал парсинга: {interval} минут")
+    
+    # Возвращаемся в меню проекта
+    await show_project_menu(update, context, project_id)
+    
     context.user_data.pop('temp_project_id', None)
     return ConversationHandler.END
 
@@ -352,6 +400,10 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             f"🕐 Время старта без изменений.",
             parse_mode="HTML"
         )
+        
+        # Возвращаемся в меню проекта
+        await show_project_menu(update, context, project_id)
+        
         context.user_data.pop('temp_project_id', None)
         context.user_data.pop('temp_post_interval', None)
         return ConversationHandler.END
@@ -376,6 +428,10 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             f"💡 Бот будет публиковать посты 24/7 каждые {minutes} минут.",
             parse_mode="HTML"
         )
+        
+        # Возвращаемся в меню проекта
+        await show_project_menu(update, context, project_id)
+        
         context.user_data.pop('temp_project_id', None)
         context.user_data.pop('temp_post_interval', None)
         return ConversationHandler.END
@@ -405,6 +461,9 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         f"каждые {minutes} минут до 23:00.",
         parse_mode="HTML"
     )
+    
+    # Возвращаемся в меню проекта
+    await show_project_menu(update, context, project_id)
     
     context.user_data.pop('temp_project_id', None)
     context.user_data.pop('temp_post_interval', None)
@@ -536,5 +595,9 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         await session.commit()
     
     await update.message.reply_text(reply, parse_mode="HTML")
+    
+    # Возвращаемся в меню проекта
+    await show_project_menu(update, context, project_id)
+    
     context.user_data.pop('temp_project_id', None)
     return ConversationHandler.END
