@@ -104,11 +104,11 @@ async def main():
     
     # ============ CallbackQueryHandlers ============
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
-    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^admin_"))
+    # Расширенный паттерн для всех admin callback'ов
+    app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
     app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
-    # Убраны project_set_check_, project_set_post_, project_set_signature_ из паттерна
     app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
     
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
