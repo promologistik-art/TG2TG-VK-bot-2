@@ -19,7 +19,6 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     """Показывает меню проекта (вызывается после изменения настроек)."""
     from .projects import project_menu_callback
     
-    # Создаём фейковый callback_query для вызова project_menu_callback
     class FakeQuery:
         def __init__(self, chat_id, message_id, bot, data):
             self.message = type('obj', (object,), {
@@ -46,7 +45,6 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         f"project_menu_{project_id}"
     )
     
-    # Создаём фейковый update
     class FakeUpdate:
         def __init__(self, query, effective_user):
             self.callback_query = query
@@ -59,7 +57,6 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сбрасывает все активные диалоги и очищает user_data."""
-    # Очищаем все временные данные
     keys_to_remove = [
         'temp_project_id', 'temp_post_interval', 'temp_media_filter',
         'temp_max_video_duration', 'temp_criteria', 'edit_source_id',
@@ -71,7 +68,6 @@ async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for key in keys_to_remove:
         context.user_data.pop(key, None)
     
-    # Если есть активный callback_query, отвечаем на него
     if update.callback_query:
         await update.callback_query.answer()
     
@@ -292,11 +288,12 @@ async def set_interval_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.edit_message_text(f"✅ Интервал парсинга: {interval} минут")
     
-    # Возвращаемся в меню проекта
+    context.user_data.pop('temp_project_id', None)
+    
+    result = ConversationHandler.END
     await show_project_menu(update, context, project_id)
     
-    context.user_data.pop('temp_project_id', None)
-    return ConversationHandler.END
+    return result
 
 
 # ============ НАСТРОЙКА ИНТЕРВАЛА ПУБЛИКАЦИИ ============
@@ -354,7 +351,6 @@ async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAU
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one()
     
-    # Кнопки времени с 6:00 до 23:30 с шагом 30 минут
     keyboard = []
     row = []
     for hour in range(6, 24):
@@ -406,7 +402,6 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         await query.edit_message_text(f"❌ {limit_msg}")
         return ConversationHandler.END
     
-    # Если пропустил выбор времени
     if query.data == "starttime_skip":
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -422,14 +417,13 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             parse_mode="HTML"
         )
         
-        # Возвращаемся в меню проекта
-        await show_project_menu(update, context, project_id)
-        
         context.user_data.pop('temp_project_id', None)
         context.user_data.pop('temp_post_interval', None)
-        return ConversationHandler.END
+        
+        result = ConversationHandler.END
+        await show_project_menu(update, context, project_id)
+        return result
     
-    # Если выбрано "Круглосуточно"
     if query.data == "starttime_24_7":
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -450,14 +444,13 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
             parse_mode="HTML"
         )
         
-        # Возвращаемся в меню проекта
-        await show_project_menu(update, context, project_id)
-        
         context.user_data.pop('temp_project_id', None)
         context.user_data.pop('temp_post_interval', None)
-        return ConversationHandler.END
+        
+        result = ConversationHandler.END
+        await show_project_menu(update, context, project_id)
+        return result
     
-    # Парсим время из callback_data (starttime_H_M)
     parts = query.data.split("_")
     hour = int(parts[1])
     minute = int(parts[2])
@@ -483,12 +476,12 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         parse_mode="HTML"
     )
     
-    # Возвращаемся в меню проекта
-    await show_project_menu(update, context, project_id)
-    
     context.user_data.pop('temp_project_id', None)
     context.user_data.pop('temp_post_interval', None)
-    return ConversationHandler.END
+    
+    result = ConversationHandler.END
+    await show_project_menu(update, context, project_id)
+    return result
 
 
 # ============ НАСТРОЙКА ПОДПИСИ ============
@@ -596,11 +589,12 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     if text.lower() == "удалить":
         signature = None
-        reply = "✅ Подпись удалена"
+        reply_text = "✅ Подпись удалена"
+        display_text = None
     else:
         signature = parse_signature_input(text)
         display_text = get_display_text(signature)
-        reply = (
+        reply_text = (
             f"✅ <b>Подпись установлена!</b>\n\n"
             f"<b>В посте будет выглядеть так:</b>\n"
             f"{display_text}\n\n"
@@ -615,11 +609,15 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await session.commit()
     
-    await update.message.reply_text(reply, parse_mode="HTML")
+    # Кнопка возврата в меню проекта
+    keyboard = [[InlineKeyboardButton("◀️ Вернуться в меню проекта", callback_data=f"project_menu_{project_id}")]]
+    
+    await update.message.reply_text(
+        reply_text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
     
     context.user_data.pop('temp_project_id', None)
-    
-    # Показываем меню проекта отдельным сообщением
-    await show_project_menu(update, context, project_id)
     
     return ConversationHandler.END
