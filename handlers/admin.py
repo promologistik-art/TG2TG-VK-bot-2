@@ -13,10 +13,21 @@ from config import Config
 from database import AsyncSessionLocal
 from models import User, Project, PostQueue
 from backup import BackupService
-from .utils import is_admin, get_user_projects_count, update_user_limits, TARIFF_LIMITS
+from .utils import is_admin, get_user_projects_count, TARIFF_LIMITS
 from .constants import AWAITING_TARIFF_SELECT, AWAITING_BROADCAST_MESSAGE
 
 logger = logging.getLogger(__name__)
+
+
+# ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+
+async def update_user_limits_direct(user: User, tariff: str):
+    """Обновляет лимиты пользователя в соответствии с тарифом."""
+    limits = TARIFF_LIMITS.get(tariff, TARIFF_LIMITS["trial"])
+    user.max_projects = limits["max_projects"]
+    user.max_sources_per_project = limits["max_sources_per_project"]
+    user.min_post_interval_minutes = limits["min_post_interval"]
+    user.min_check_interval_minutes = limits["min_check_interval"]
 
 
 # ============ АДМИН-ПАНЕЛЬ ============
@@ -66,7 +77,6 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     action = query.data
     
-    # admin_back обрабатывается отдельным хендлером
     if action == "admin_back":
         return
     
@@ -155,7 +165,12 @@ async def show_admin_users(query):
             status_icon = "👑"
             tariff_display = "Безлимит"
         else:
-            status_icon = "🟢" if u.subscription_active else "🟡" if u.trial_ends_at and u.trial_ends_at > datetime.utcnow() else "🔴"
+            if u.subscription_active:
+                status_icon = "💎"
+            elif u.trial_ends_at and u.trial_ends_at > datetime.utcnow():
+                status_icon = "🎁"
+            else:
+                status_icon = "🔴"
             tariff_display = TARIFF_LIMITS.get(u.tariff, {}).get('name', '—')
         
         display_name = u.full_name or u.username or "Пользователь"
@@ -166,7 +181,13 @@ async def show_admin_users(query):
         else:
             text += "\n"
         text += f"  🆔 {u.telegram_id} | 📁 {projects_count} проектов\n"
-        text += f"  💳 {tariff_display}\n\n"
+        text += f"  💳 {tariff_display}\n"
+        
+        if u.subscription_active and u.subscription_ends_at:
+            text += f"  📅 Подписка до: {u.subscription_ends_at.strftime('%d.%m.%Y')}\n"
+        elif u.trial_ends_at and u.trial_ends_at > datetime.utcnow():
+            text += f"  📅 Триал до: {u.trial_ends_at.strftime('%d.%m.%Y')}\n"
+        text += "\n"
         
         keyboard.append([InlineKeyboardButton(f"⚙️ Управлять {display_name[:15]}", callback_data=f"user_manage_{u.telegram_id}")])
     
@@ -233,25 +254,36 @@ async def confirm_set_tariff(query, user_id: int, tariff: str):
             await query.edit_message_text("❌ Пользователь не найден")
             return
         
+        # Устанавливаем платную подписку
         user.subscription_active = True
         user.subscription_ends_at = datetime.utcnow() + timedelta(days=30)
         user.tariff = tariff
-        await update_user_limits(user, tariff)
+        # Сбрасываем триал (чтобы не путался)
+        user.trial_ends_at = None
+        
+        # Обновляем лимиты в той же сессии
+        await update_user_limits_direct(user, tariff)
+        
         await session.commit()
         
         tariff_name = TARIFF_LIMITS.get(tariff, {}).get('name', tariff)
         try:
             await query.message.bot.send_message(
                 chat_id=user_id,
-                text=f"✅ <b>Тариф активирован!</b>\n💎 {tariff_name}\n📅 До: {user.subscription_ends_at.strftime('%d.%m.%Y')}",
+                text=f"✅ <b>Тариф активирован!</b>\n💎 {tariff_name}\n📅 Подписка до: {user.subscription_ends_at.strftime('%d.%m.%Y')}\n\n"
+                     f"📊 Ваши лимиты:\n"
+                     f"• Проектов: {user.max_projects}\n"
+                     f"• Источников на проект: {user.max_sources_per_project}\n"
+                     f"• Мин. интервал постинга: {user.min_post_interval_minutes} мин\n"
+                     f"• Мин. интервал парсинга: {user.min_check_interval_minutes} мин",
                 parse_mode="HTML"
             )
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to notify user {user_id}: {e}")
     
     keyboard = [[InlineKeyboardButton("◀️ В админ-панель", callback_data="admin_back")]]
     await query.edit_message_text(
-        f"✅ Тариф <b>{tariff_name}</b> подключен!\n👤 @{user.username or user.telegram_id}\n📅 До: {user.subscription_ends_at.strftime('%d.%m.%Y')}",
+        f"✅ Тариф <b>{tariff_name}</b> подключен!\n👤 @{user.username or user.telegram_id}\n📅 Подписка до: {user.subscription_ends_at.strftime('%d.%m.%Y')}",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -264,12 +296,15 @@ async def admin_extend_trial_start(update: Update, context: ContextTypes.DEFAULT
     
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.subscription_active == False).order_by(User.trial_ends_at.asc()).limit(20)
+            select(User).where(
+                User.subscription_active == False,
+                User.trial_ends_at > datetime.utcnow()
+            ).order_by(User.trial_ends_at.asc()).limit(20)
         )
         users = result.scalars().all()
     
     if not users:
-        await update.message.reply_text("📭 Нет пользователей на триале")
+        await update.message.reply_text("📭 Нет пользователей на активном триале")
         return ConversationHandler.END
     
     text = "🎁 <b>Продлить триал</b>\n\nВыберите пользователя:"
@@ -295,12 +330,23 @@ async def extend_trial_days(query, user_id: int):
             user.trial_ends_at = user.trial_ends_at + timedelta(days=7)
         else:
             user.trial_ends_at = datetime.utcnow() + timedelta(days=7)
+        
+        # При продлении триала убеждаемся, что лимиты соответствуют пробному тарифу
+        user.tariff = "trial"
+        await update_user_limits_direct(user, "trial")
+        user.subscription_active = False
+        user.subscription_ends_at = None
+        
         await session.commit()
         
         try:
             await query.message.bot.send_message(
                 chat_id=user_id,
-                text=f"🎁 <b>Триал продлён!</b>\n📅 До: {user.trial_ends_at.strftime('%d.%m.%Y')}",
+                text=f"🎁 <b>Триал продлён!</b>\n📅 Триал до: {user.trial_ends_at.strftime('%d.%m.%Y')}\n\n"
+                     f"📊 Ваши лимиты:\n"
+                     f"• Проектов: {user.max_projects}\n"
+                     f"• Источников на проект: {user.max_sources_per_project}\n"
+                     f"• Мин. интервал постинга: {user.min_post_interval_minutes} мин",
                 parse_mode="HTML"
             )
         except:
@@ -308,7 +354,7 @@ async def extend_trial_days(query, user_id: int):
     
     keyboard = [[InlineKeyboardButton("◀️ В админ-панель", callback_data="admin_back")]]
     await query.edit_message_text(
-        f"✅ Триал продлён!\n👤 @{user.username or user.telegram_id}\n📅 До: {user.trial_ends_at.strftime('%d.%m.%Y')}",
+        f"✅ Триал продлён!\n👤 @{user.username or user.telegram_id}\n📅 Триал до: {user.trial_ends_at.strftime('%d.%m.%Y')}",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="HTML"
     )
@@ -327,6 +373,7 @@ async def deactivate_user(query, user_id: int):
             return
         user.subscription_active = False
         user.trial_ends_at = datetime.utcnow() - timedelta(days=1)
+        user.subscription_ends_at = None
         await session.commit()
     
     keyboard = [[InlineKeyboardButton("◀️ В админ-панель", callback_data="admin_back")]]
@@ -341,10 +388,14 @@ async def activate_user(query, user_id: int):
             await query.edit_message_text("❌ Пользователь не найден")
             return
         user.trial_ends_at = datetime.utcnow() + timedelta(days=5)
+        user.tariff = "trial"
+        await update_user_limits_direct(user, "trial")
+        user.subscription_active = False
+        user.subscription_ends_at = None
         await session.commit()
     
     keyboard = [[InlineKeyboardButton("◀️ В админ-панель", callback_data="admin_back")]]
-    await query.edit_message_text(f"✅ Пользователь активирован", reply_markup=InlineKeyboardMarkup(keyboard))
+    await query.edit_message_text(f"✅ Пользователь активирован (триал 5 дней)", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ============ МЕНЮ УПРАВЛЕНИЯ ПОЛЬЗОВАТЕЛЕМ ============
@@ -360,16 +411,32 @@ async def show_user_manage_menu(query, user_id: int):
     tariff_name = TARIFF_LIMITS.get(user.tariff, {}).get('name', user.tariff)
     display_name = user.full_name or user.username or f"ID:{user.telegram_id}"
     
-    text = f"⚙️ <b>{display_name}</b>\n💳 {tariff_name}\n📅 Триал до: {user.trial_ends_at.strftime('%d.%m.%Y %H:%M') if user.trial_ends_at else '—'}\n\nВыберите действие:"
+    text = f"⚙️ <b>{display_name}</b>\n💳 {tariff_name}\n"
+    
+    if user.subscription_active and user.subscription_ends_at:
+        text += f"📅 Подписка до: {user.subscription_ends_at.strftime('%d.%m.%Y %H:%M')}\n"
+    elif user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
+        text += f"📅 Триал до: {user.trial_ends_at.strftime('%d.%m.%Y %H:%M')}\n"
+    
+    text += f"\n📊 Лимиты:\n"
+    text += f"• Проектов: {user.max_projects}\n"
+    text += f"• Источников на проект: {user.max_sources_per_project}\n"
+    text += f"• Мин. интервал постинга: {user.min_post_interval_minutes} мин\n"
+    text += f"• Мин. интервал парсинга: {user.min_check_interval_minutes} мин\n\n"
+    text += f"Выберите действие:"
     
     keyboard = [
         [InlineKeyboardButton("💎 Установить тариф", callback_data=f"tariff_for_{user_id}")],
-        [InlineKeyboardButton("🎁 Продлить триал (+7 дн)", callback_data=f"extend_user_{user_id}")],
     ]
+    
     if user.subscription_active:
+        keyboard.append([InlineKeyboardButton("🎁 Продлить триал", callback_data=f"extend_user_{user_id}")])
         keyboard.append([InlineKeyboardButton("❌ Деактивировать", callback_data=f"deactivate_user_{user_id}")])
     else:
-        keyboard.append([InlineKeyboardButton("✅ Активировать", callback_data=f"activate_user_{user_id}")])
+        if user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
+            keyboard.append([InlineKeyboardButton("🎁 Продлить триал", callback_data=f"extend_user_{user_id}")])
+        keyboard.append([InlineKeyboardButton("✅ Активировать (триал 5дн)", callback_data=f"activate_user_{user_id}")])
+    
     keyboard.append([InlineKeyboardButton("◀️ Назад к списку", callback_data="admin_users_list")])
     
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
@@ -416,12 +483,17 @@ async def deactivate_menu(query):
 
 async def activate_menu(query):
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.subscription_active == False).order_by(User.created_at.desc()).limit(20))
+        result = await session.execute(
+            select(User).where(
+                User.subscription_active == False,
+                User.trial_ends_at < datetime.utcnow()
+            ).order_by(User.created_at.desc()).limit(20)
+        )
         users = result.scalars().all()
     if not users:
-        await query.edit_message_text("📭 Нет неактивных пользователей", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_tariff_menu")]]))
+        await query.edit_message_text("📭 Нет неактивных пользователей (с истекшим триалом)", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data="admin_tariff_menu")]]))
         return
-    text = "✅ <b>Выберите пользователя для активации:</b>"
+    text = "✅ <b>Выберите пользователя для активации (триал 5 дней):</b>"
     keyboard = []
     for u in users:
         display_name = u.full_name or u.username or f"ID:{u.telegram_id}"
@@ -469,7 +541,7 @@ async def export_users_excel(query, context):
     ws = wb.active
     ws.title = "Пользователи"
     
-    headers = ["Telegram ID", "Username", "Full Name", "Admin", "Tariff", "Subscription", "Trial Ends", "Projects", "Parsed Today", "Posted Today", "Created At"]
+    headers = ["Telegram ID", "Username", "Full Name", "Admin", "Tariff", "Status", "Subscription End", "Trial End", "Projects", "Sources Limit", "Post Interval", "Parse Interval", "Parsed Today", "Posted Today", "Created At"]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True)
@@ -477,24 +549,34 @@ async def export_users_excel(query, context):
     
     for row, u in enumerate(users, 2):
         projects_count = await get_user_projects_count(u.telegram_id)
+        
         if u.is_admin:
             tariff_name = "Безлимит"
-            subscription_status = "Админ"
+            status = "Админ"
         else:
             tariff_name = TARIFF_LIMITS.get(u.tariff, {}).get('name', u.tariff)
-            subscription_status = "Активна" if u.subscription_active else ("Триал" if u.trial_ends_at and u.trial_ends_at > datetime.utcnow() else "Нет")
+            if u.subscription_active:
+                status = "Подписка"
+            elif u.trial_ends_at and u.trial_ends_at > datetime.utcnow():
+                status = "Триал"
+            else:
+                status = "Нет доступа"
         
         ws.cell(row=row, column=1, value=u.telegram_id)
         ws.cell(row=row, column=2, value=u.username or "")
         ws.cell(row=row, column=3, value=u.full_name or "")
         ws.cell(row=row, column=4, value="Да" if u.is_admin else "Нет")
         ws.cell(row=row, column=5, value=tariff_name)
-        ws.cell(row=row, column=6, value=subscription_status)
-        ws.cell(row=row, column=7, value=u.trial_ends_at.strftime("%d.%m.%Y %H:%M") if u.trial_ends_at else "")
-        ws.cell(row=row, column=8, value=projects_count)
-        ws.cell(row=row, column=9, value=u.posts_parsed_today)
-        ws.cell(row=row, column=10, value=u.posts_posted_today)
-        ws.cell(row=row, column=11, value=u.created_at.strftime("%d.%m.%Y %H:%M") if u.created_at else "")
+        ws.cell(row=row, column=6, value=status)
+        ws.cell(row=row, column=7, value=u.subscription_ends_at.strftime("%d.%m.%Y") if u.subscription_ends_at else "")
+        ws.cell(row=row, column=8, value=u.trial_ends_at.strftime("%d.%m.%Y") if u.trial_ends_at else "")
+        ws.cell(row=row, column=9, value=projects_count)
+        ws.cell(row=row, column=10, value=u.max_sources_per_project)
+        ws.cell(row=row, column=11, value=u.min_post_interval_minutes)
+        ws.cell(row=row, column=12, value=u.min_check_interval_minutes)
+        ws.cell(row=row, column=13, value=u.posts_parsed_today)
+        ws.cell(row=row, column=14, value=u.posts_posted_today)
+        ws.cell(row=row, column=15, value=u.created_at.strftime("%d.%m.%Y %H:%M") if u.created_at else "")
     
     output = BytesIO()
     wb.save(output)
@@ -560,8 +642,7 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         if not await is_admin(update.effective_user.id):
             await query.edit_message_text("❌ Нет доступа")
-            return ConversationHandler.END
-        await query.edit_message_text("📢 <b>Рассылка</b>\n\nОтправьте текст сообщения.\n/cancel — отмена", parse_mode="HTML")
+            return ConversationHandler.END        await query.edit_message_text("📢 <b>Рассылка</b>\n\nОтправьте текст сообщения.\n/cancel — отмена", parse_mode="HTML")
     else:
         if not await is_admin(update.effective_user.id):
             await update.message.reply_text("❌ Нет доступа")
