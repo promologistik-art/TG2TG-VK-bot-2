@@ -57,6 +57,27 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await project_menu_callback(fake_update, context)
 
 
+async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает все активные диалоги и очищает user_data."""
+    # Очищаем все временные данные
+    keys_to_remove = [
+        'temp_project_id', 'temp_post_interval', 'temp_media_filter',
+        'temp_max_video_duration', 'temp_criteria', 'edit_source_id',
+        'awaiting_criteria', 'awaiting_duration', 'awaiting_text_choice',
+        'edit_views', 'edit_media_filter', 'awaiting_project_name',
+        'temp_source', 'temp_project_name', 'temp_criteria_views',
+        'edit_source_id', 'awaiting_broadcast'
+    ]
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Если есть активный callback_query, отвечаем на него
+    if update.callback_query:
+        await update.callback_query.answer()
+    
+    logger.info(f"User {update.effective_user.id}: all dialogs reset")
+
+
 # ============ ENTRY POINTS ДЛЯ МЕНЮ ПРОЕКТА ============
 
 async def set_interval_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -596,8 +617,9 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await update.message.reply_text(reply, parse_mode="HTML")
     
-    # Возвращаемся в меню проекта
+    context.user_data.pop('temp_project_id', None)
+    
+    # Показываем меню проекта отдельным сообщением
     await show_project_menu(update, context, project_id)
     
-    context.user_data.pop('temp_project_id', None)
     return ConversationHandler.END
