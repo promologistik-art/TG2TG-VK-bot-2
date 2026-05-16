@@ -123,12 +123,9 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принудительная публикация следующего поста из очереди (доступно всем пользователям)."""
     project = await require_project(update, context)
     if not project:
-        return
-    
-    if not await is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Только админ может принудительно публиковать посты")
         return
     
     async with AsyncSessionLocal() as session:
