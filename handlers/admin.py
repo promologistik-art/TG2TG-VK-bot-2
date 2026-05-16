@@ -254,14 +254,11 @@ async def confirm_set_tariff(query, user_id: int, tariff: str):
             await query.edit_message_text("❌ Пользователь не найден")
             return
         
-        # Устанавливаем платную подписку
         user.subscription_active = True
         user.subscription_ends_at = datetime.utcnow() + timedelta(days=30)
         user.tariff = tariff
-        # Сбрасываем триал (чтобы не путался)
         user.trial_ends_at = None
         
-        # Обновляем лимиты в той же сессии
         await update_user_limits_direct(user, tariff)
         
         await session.commit()
@@ -331,7 +328,6 @@ async def extend_trial_days(query, user_id: int):
         else:
             user.trial_ends_at = datetime.utcnow() + timedelta(days=7)
         
-        # При продлении триала убеждаемся, что лимиты соответствуют пробному тарифу
         user.tariff = "trial"
         await update_user_limits_direct(user, "trial")
         user.subscription_active = False
@@ -642,7 +638,8 @@ async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         if not await is_admin(update.effective_user.id):
             await query.edit_message_text("❌ Нет доступа")
-            return ConversationHandler.END        await query.edit_message_text("📢 <b>Рассылка</b>\n\nОтправьте текст сообщения.\n/cancel — отмена", parse_mode="HTML")
+            return ConversationHandler.END
+        await query.edit_message_text("📢 <b>Рассылка</b>\n\nОтправьте текст сообщения.\n/cancel — отмена", parse_mode="HTML")
     else:
         if not await is_admin(update.effective_user.id):
             await update.message.reply_text("❌ Нет доступа")
