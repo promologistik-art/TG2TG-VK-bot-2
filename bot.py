@@ -17,6 +17,7 @@ from handlers import (
     criteria_views_input, criteria_reactions_input,
     media_filter_callback, duration_callback, remove_text_callback,
     my_sources, edit_source_callback, delete_source_callback,
+    confirm_delete_source_callback, cancel_delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
     edit_exclude_phrases_input, back_to_sources_callback,
@@ -49,6 +50,7 @@ from posters import TelegramPoster
 from scheduler import Scheduler
 from post_scheduler import PostScheduler
 from backup import BackupService, AutoBackup
+from cleanup import TempCleaner
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -79,6 +81,9 @@ async def main():
     auto_backup = AutoBackup(backup_service)
     auto_backup_task = asyncio.create_task(auto_backup.start())
     
+    temp_cleaner = TempCleaner()
+    temp_cleaner_task = asyncio.create_task(temp_cleaner.start())
+    
     # ============ Command Handlers ============
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
@@ -104,7 +109,6 @@ async def main():
     
     # ============ CallbackQueryHandlers ============
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
-    # Расширенный паттерн для всех admin callback'ов
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
     app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
@@ -113,6 +117,8 @@ async def main():
     
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
+    app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
+    app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
     app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
     
@@ -306,9 +312,11 @@ async def main():
         scheduler_task.cancel()
         post_scheduler_task.cancel()
         auto_backup_task.cancel()
+        temp_cleaner_task.cancel()
         await scheduler.stop()
         await post_scheduler.stop()
         await auto_backup.stop()
+        await temp_cleaner.stop()
         await poster.stop()
         await app.updater.stop()
         await app.stop()

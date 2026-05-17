@@ -144,6 +144,77 @@ class Scheduler:
                     self._tasks[task_key] = task
                     logger.info(f"⏰ Project '{project.name}' (ID: {project.id}) scheduled")
 
+    async def _download_media_with_retry(self, scraper, media_url: str, save_path: str, max_retries: int = 3) -> bool:
+        """Скачивание медиа с повторными попытками."""
+        for attempt in range(max_retries):
+            if await scraper.download_media(media_url, save_path):
+                # Проверяем размер файла
+                try:
+                    file_size = os.path.getsize(save_path)
+                    if file_size < 1000:  # меньше 1KB — битый файл
+                        logger.warning(f"Downloaded file too small: {file_size} bytes (attempt {attempt + 1})")
+                        os.remove(save_path)
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(3)
+                            continue
+                        return False
+                    logger.info(f"✅ Media downloaded: {save_path} ({file_size} bytes)")
+                    return True
+                except Exception as e:
+                    logger.warning(f"File check failed: {e}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(3)
+                        continue
+                    return False
+            else:
+                logger.warning(f"Download attempt {attempt + 1} failed for {media_url}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3)
+        return False
+
+    async def _calculate_next_post_time(self, project, user, msk_now):
+        """Рассчитывает ближайшее время для первого поста."""
+        interval_minutes = max(
+            int(project.post_interval_hours * 60),
+            user.min_post_interval_minutes,
+            Config.MIN_POST_INTERVAL_MINUTES
+        )
+        
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(PostQueue).where(
+                    PostQueue.project_id == project.id
+                ).order_by(PostQueue.scheduled_time.desc()).limit(1)
+            )
+            last_queued = result.scalar_one_or_none()
+        
+        if last_queued:
+            last_msk = last_queued.scheduled_time + timedelta(hours=3)
+            next_time = last_msk + timedelta(minutes=interval_minutes)
+            if next_time < msk_now:
+                # Если последний пост в прошлом, считаем от текущего времени
+                slots_passed = ((msk_now - next_time).total_seconds() / 60) // interval_minutes + 1
+                next_time = next_time + timedelta(minutes=slots_passed * interval_minutes)
+        else:
+            # Первый пост — ближайшее время, округлённое вверх до интервала
+            start_hour = project.active_hours_start
+            
+            # Округляем текущее время до следующего интервала
+            minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
+            if minutes_since_start < 0:
+                # Ещё не наступил start_hour
+                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+            else:
+                # Округляем до следующего интервала
+                slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
+                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+            
+            # Проверяем активные часы
+            if next_time.hour >= project.active_hours_end:
+                next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        
+        return next_time
+
     async def _process_project(self, project: Project):
         logger.info(f"🔍 Processing project '{project.name}' (ID: {project.id})")
         
@@ -201,22 +272,17 @@ class Scheduler:
                     if await is_post_parsed(project.id, post["url"]):
                         continue
                     
-                    # Пропускаем рекламу
                     if post.get("is_advertisement", False):
                         continue
                     
-                    # ЖЁСТКАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА (первичная)
                     media_type = post.get("media_type")
                     has_media = post.get("has_media", False)
                     
                     if source.media_filter == "photo_only":
                         if not has_media or media_type != "photo":
-                            logger.debug(f"⏭️ Skipping @{source.channel_username}: not a photo (type={media_type})")
                             continue
-                    
                     elif source.media_filter == "video_only":
                         if not has_media or media_type != "video":
-                            logger.debug(f"⏭️ Skipping @{source.channel_username}: not a video (type={media_type})")
                             continue
                     
                     post["source_username"] = source.channel_username
@@ -243,7 +309,6 @@ class Scheduler:
                         best_post = post
                 
                 if best_post:
-                    # Проверка длительности видео
                     if source.max_video_duration and source.max_video_duration > 0:
                         video_dur = best_post.get("video_duration", 0)
                         if video_dur > 0 and video_dur > source.max_video_duration:
@@ -253,24 +318,14 @@ class Scheduler:
                             )
                             continue
                     
-                    # ПОВТОРНАЯ ПРОВЕРКА ФИЛЬТРА МЕДИА (после выбора лучшего поста)
                     media_type = best_post.get("media_type")
                     has_media = best_post.get("has_media", False)
                     
                     if source.media_filter == "photo_only":
                         if not has_media or media_type != "photo":
-                            logger.info(
-                                f"⚠️ FINAL CHECK FAIL: @{source.channel_username} "
-                                f"media_filter=photo_only but post has media={has_media}, type={media_type}"
-                            )
                             continue
-                    
                     elif source.media_filter == "video_only":
                         if not has_media or media_type != "video":
-                            logger.info(
-                                f"⚠️ FINAL CHECK FAIL: @{source.channel_username} "
-                                f"media_filter=video_only but post has media={has_media}, type={media_type}"
-                            )
                             continue
                     
                     logger.info(
@@ -282,37 +337,30 @@ class Scheduler:
                     await mark_post_parsed(project.id, source.id, best_post["url"])
                     total_parsed += 1
                     
-                    # СКАЧИВАНИЕ МЕДИА
                     media_downloaded = False
                     if best_post.get("has_media") and best_post.get("media_url"):
                         ext = "jpg" if best_post.get("media_type") == "photo" else "mp4"
                         filename = f"{uuid.uuid4()}.{ext}"
                         media_path = os.path.join(Config.TEMP_DIR, filename)
                         
-                        if await scraper.download_media(best_post["media_url"], media_path):
+                        if await self._download_media_with_retry(scraper, best_post["media_url"], media_path):
                             best_post["media_path"] = media_path
                             media_downloaded = True
                             logger.info(f"💾 Media saved: {media_path}")
                         else:
                             logger.warning(f"⚠️ Media download failed for @{source.channel_username}")
                     
-                    # КРИТИЧЕСКАЯ ПРОВЕРКА: media_filter требует медиа, но медиа не скачалось
                     if source.media_filter in ("photo_only", "video_only"):
                         if not media_downloaded:
                             logger.info(
-                                f"🚫 BLOCKED: media_filter={source.media_filter} but media download failed "
-                                f"for @{source.channel_username}"
+                                f"🚫 BLOCKED: media_filter={source.media_filter} but media download failed"
                             )
                             continue
                     
-                    # ПРОВЕРКА: remove_original_text без медиа
                     if source.remove_original_text and not media_downloaded:
-                        logger.info(
-                            f"📝 Skipping post (text removed, no media) from @{source.channel_username}"
-                        )
+                        logger.info(f"📝 Skipping (text removed, no media) from @{source.channel_username}")
                         continue
                     
-                    # ПРОВЕРКА: пустой пост
                     has_text = bool(best_post.get("text", "").strip())
                     if not has_text and not media_downloaded:
                         logger.info(f"📭 Empty post from @{source.channel_username}, skipping")
@@ -333,36 +381,13 @@ class Scheduler:
         if posts_to_publish:
             logger.info(f"📤 Found {len(posts_to_publish)} posts to queue")
             
-            interval_minutes = max(
-                int(project.post_interval_hours * 60),
-                user.min_post_interval_minutes,
-                Config.MIN_POST_INTERVAL_MINUTES
-            )
-            
             msk_now = get_moscow_time().replace(tzinfo=None)
             
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(PostQueue).where(
-                        PostQueue.project_id == project.id
-                    ).order_by(PostQueue.scheduled_time.desc()).limit(1)
-                )
-                last_queued = result.scalar_one_or_none()
-            
-            if last_queued:
-                last_msk = last_queued.scheduled_time + timedelta(hours=3)
-                next_time = last_msk + timedelta(minutes=interval_minutes)
-                if next_time < msk_now:
-                    slots_passed = ((msk_now - next_time).total_seconds() / 60) // interval_minutes + 1
-                    next_time = next_time + timedelta(minutes=slots_passed * interval_minutes)
-            else:
-                start_hour = project.active_hours_start
-                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-                if next_time < msk_now:
-                    next_time = next_time + timedelta(days=1)
-            
             for i, post in enumerate(posts_to_publish):
-                if i > 0:
+                if i == 0:
+                    next_time = await self._calculate_next_post_time(project, user, msk_now)
+                else:
+                    interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
                     next_time = next_time + timedelta(minutes=interval_minutes)
                 
                 utc_time = next_time - timedelta(hours=3)
