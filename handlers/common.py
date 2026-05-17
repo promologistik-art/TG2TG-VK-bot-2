@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Сбрасываем все активные диалоги
+    from .settings import reset_all_dialogs
+    await reset_all_dialogs(update, context)
+    
     context.user_data.clear()
     
     user = update.effective_user
@@ -107,6 +111,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/parse - запустить парсинг сейчас\n"
         "/queue - очередь публикации\n"
         "/postnow - опубликовать следующий пост немедленно\n"
+        "/clear_failed - очистить неудавшиеся посты из очереди\n"
         "/reset_history - сбросить историю спарсенных постов\n"
     )
     

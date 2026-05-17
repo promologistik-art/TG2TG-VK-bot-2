@@ -97,10 +97,10 @@ async def queue_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     interval_minutes = int(project.post_interval_hours * 60)
     if interval_minutes < 60:
-        text += f"⏰ Интервал: каждые {interval_minutes} мин (мин. {Config.MIN_POST_INTERVAL_MINUTES} мин)\n\n"
+        text += f"⏰ Интервал: каждые {interval_minutes} мин\n\n"
     else:
         hours = interval_minutes // 60
-        text += f"⏰ Интервал: каждые {hours} ч (мин. {Config.MIN_POST_INTERVAL_MINUTES} мин)\n\n"
+        text += f"⏰ Интервал: каждые {hours} ч\n\n"
     
     MSK_OFFSET = timedelta(hours=3)
     

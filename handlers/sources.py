@@ -759,7 +759,6 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
     source_id = int(query.data.replace("del_source_", ""))
     context.user_data['delete_source_id'] = source_id
     
-    # Получаем имя источника
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
         source = result.scalar_one_or_none()
@@ -770,10 +769,12 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
          InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_source")]
     ]
     
-    await query.edit_message_text(
+    # Отправляем новое сообщение вместо редактирования
+    await query.message.reply_text(
         f"⚠️ Удалить источник {source_name}?\n\nПосты из этого источника больше не будут парситься.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    await query.delete_message()  # удаляем старое сообщение с кнопкой "Удалить"
 
 
 async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
