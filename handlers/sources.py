@@ -335,7 +335,7 @@ async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def show_edit_source_menu(query, source_id: int):
-    """Отображает меню редактирования источника (может быть вызвано после изменения параметров)."""
+    """Отображает меню редактирования источника."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
         source = result.scalar_one_or_none()
@@ -382,7 +382,7 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # Обработка очистки стоп-фраз (без диалога) - возвращаемся в меню редактирования
+    # Обработка очистки стоп-фраз (без диалога)
     if data.startswith("edit_clear_phrases_"):
         source_id = int(data.replace("edit_clear_phrases_", ""))
         async with AsyncSessionLocal() as session:
@@ -395,7 +395,6 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_edit_source_menu(query, source_id)
         return ConversationHandler.END
     
-    # Остальные действия требуют диалога
     source_id = int(data.split("_")[-1])
     context.user_data['edit_source_id'] = source_id
     
@@ -440,7 +439,8 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Текущие: {current}\n\n"
             f"Введите новые фразы через запятую.\n"
             f"Например: реклама, спонсор, подпишись\n\n"
-            f"Или нажмите кнопку ниже чтобы очистить:",
+            f"Новые фразы будут <b>добавлены</b> к существующим.\n"
+            f"Для удаления всех фраз нажмите кнопку «Очистить».",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")
@@ -491,10 +491,8 @@ async def edit_reactions_input(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await session.commit()
     
-    # После обновления критериев возвращаемся в меню редактирования
     await update.message.reply_text("✅ Критерии обновлены!")
     
-    # Создаём фейковый callback_query для вызова меню
     class FakeQuery:
         def __init__(self, chat_id, message_id, bot):
             self.message = type('obj', (object,), {
@@ -613,26 +611,43 @@ async def edit_remove_text_callback(update: Update, context: ContextTypes.DEFAUL
 
 
 async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    new_phrases_text = update.message.text.strip()
     source_id = context.user_data.get('edit_source_id')
     
-    if text == '-':
-        text = None
-    
     async with AsyncSessionLocal() as session:
+        result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
+        source = result.scalar_one()
+        
+        current_phrases = source.exclude_phrases or ""
+        
+        # Собираем существующие фразы в список
+        existing_phrases = [p.strip() for p in current_phrases.split(",") if p.strip()]
+        
+        # Добавляем новые фразы
+        if new_phrases_text and new_phrases_text != "-":
+            new_phrases = [p.strip() for p in new_phrases_text.split(",") if p.strip()]
+            for phrase in new_phrases:
+                if phrase not in existing_phrases:
+                    existing_phrases.append(phrase)
+        
+        # Формируем обратно строку
+        if existing_phrases:
+            updated_phrases = ", ".join(existing_phrases)
+        else:
+            updated_phrases = None
+        
         await session.execute(
             sql_update(SourceChannel)
             .where(SourceChannel.id == source_id)
-            .values(exclude_phrases=text)
+            .values(exclude_phrases=updated_phrases)
         )
         await session.commit()
     
-    if text:
-        await update.message.reply_text(f"✅ Стоп-фразы обновлены: {text}")
+    if updated_phrases:
+        await update.message.reply_text(f"✅ Стоп-фразы обновлены!\nТекущий список: {updated_phrases}")
     else:
-        await update.message.reply_text("✅ Стоп-фразы очищены")
+        await update.message.reply_text("✅ Все стоп-фразы удалены")
     
-    # Создаём фейковый callback_query для вызова меню
     class FakeQuery:
         def __init__(self, chat_id, message_id, bot):
             self.message = type('obj', (object,), {
@@ -738,14 +753,60 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ============ УДАЛЕНИЕ ИСТОЧНИКА С ПОДТВЕРЖДЕНИЕМ ============
+
 async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает подтверждение перед удалением источника."""
     query = update.callback_query
     await query.answer()
+    
     source_id = int(query.data.replace("del_source_", ""))
+    context.user_data['delete_source_id'] = source_id
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_delete_source"),
+         InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_source")]
+    ]
+    
+    await query.edit_message_text(
+        "⚠️ Удалить этот источник?\n\nПосты из этого источника больше не будут парситься.",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления источника."""
+    query = update.callback_query
+    await query.answer()
+    
+    source_id = context.user_data.get('delete_source_id')
+    if not source_id:
+        await query.edit_message_text("❌ Ошибка: источник не найден")
+        return
+    
     async with AsyncSessionLocal() as session:
         await session.execute(delete(SourceChannel).where(SourceChannel.id == source_id))
         await session.commit()
+    
+    context.user_data.pop('delete_source_id', None)
+    
     await query.edit_message_text("✅ Источник удалён")
+    
+    # Возвращаемся к списку источников
+    await my_sources(update, context)
+
+
+async def cancel_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена удаления источника."""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data.pop('delete_source_id', None)
+    
+    await query.edit_message_text("❌ Удаление отменено")
+    
+    # Возвращаемся к списку источников
+    await my_sources(update, context)
 
 
 # ============ ВОЗВРАТ К ИСТОЧНИКАМ ============

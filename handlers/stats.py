@@ -1,10 +1,11 @@
 import logging
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ContextTypes
 from sqlalchemy import select
 from database import AsyncSessionLocal
-from models import User, Project, PostQueue
-from .utils import require_project, get_sources_count, get_project_target
+from models import User, Project, PostQueue, SourceChannel
+from .utils import require_project, get_sources_count, get_project_target, TARIFF_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +22,46 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         total_parsed = sum(p.posts_parsed_today for p in projects)
         total_posted = sum(p.posts_posted_today for p in projects)
+        
+        # Считаем общее количество источников во всех проектах
+        total_sources = 0
+        for p in projects:
+            sources_count = await get_sources_count(p.id)
+            total_sources += sources_count
     
-    text = (
-        f"📊 <b>Общая статистика</b>\n\n"
-        f"📁 Проектов: {len(projects)} / {user.max_projects}\n"
-        f"📈 За сегодня:\n"
-        f"• Спарсено: {total_parsed}\n"
-        f"• Опубликовано: {total_posted}\n\n"
-        f"/my_projects — статистика по проектам"
-    )
+    # Информация о тарифе
+    tariff_name = TARIFF_LIMITS.get(user.tariff, {}).get('name', user.tariff)
+    
+    text = f"📊 <b>Ваша статистика</b>\n\n"
+    text += f"💎 <b>Тариф:</b> {tariff_name}\n"
+    
+    # Дата окончания
+    if user.subscription_active and user.subscription_ends_at:
+        ends_at = user.subscription_ends_at
+        days_left = (ends_at - datetime.utcnow()).days
+        text += f"📅 Подписка до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
+    elif user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
+        ends_at = user.trial_ends_at
+        days_left = (ends_at - datetime.utcnow()).days
+        text += f"🎁 Триал до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
+    else:
+        text += f"⚠️ Доступ приостановлен\n"
+    
+    text += f"\n📊 <b>Ваши лимиты:</b>\n"
+    text += f"• Макс. проектов: {user.max_projects}\n"
+    text += f"• Макс. источников на проект: {user.max_sources_per_project}\n"
+    text += f"• Мин. интервал постинга: {user.min_post_interval_minutes} мин\n"
+    text += f"• Мин. интервал парсинга: {user.min_check_interval_minutes} мин\n"
+    
+    text += f"\n📈 <b>Текущее использование:</b>\n"
+    text += f"• Проектов: {len(projects)} / {user.max_projects}\n"
+    text += f"• Всего источников: {total_sources}\n"
+    
+    text += f"\n📅 <b>За сегодня:</b>\n"
+    text += f"• Спарсено: {total_parsed}\n"
+    text += f"• Опубликовано: {total_posted}\n"
+    
+    text += f"\n/my_projects — статистика по проектам"
     
     await update.message.reply_text(text, parse_mode="HTML")
 

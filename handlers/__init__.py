@@ -17,6 +17,7 @@ from .sources import (
     criteria_views_input, criteria_reactions_input,
     media_filter_callback, duration_callback, remove_text_callback,
     my_sources, edit_source_callback, delete_source_callback,
+    confirm_delete_source_callback, cancel_delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
     edit_exclude_phrases_input, back_to_sources_callback
