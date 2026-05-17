@@ -1,10 +1,11 @@
 import logging
 import re
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
-from sqlalchemy import update as sql_update, select
+from sqlalchemy import update as sql_update, select, delete
 from database import AsyncSessionLocal
-from models import Project
+from models import Project, PostQueue
 from .utils import require_project, check_action_limit, check_user_access
 from .constants import AWAITING_INTERVAL, AWAITING_SIGNATURE, AWAITING_POST_INTERVAL
 
@@ -53,6 +54,77 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     fake_update = FakeUpdate(fake_query, update.effective_user)
     
     await project_menu_callback(fake_update, context)
+
+
+async def recalc_queue_after_interval_change(project_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """Пересчитывает очередь после изменения интервала постинга."""
+    from utils import get_moscow_time
+    
+    async with AsyncSessionLocal() as session:
+        # Получаем проект
+        result = await session.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one()
+        
+        # Получаем все pending посты в порядке очереди
+        result = await session.execute(
+            select(PostQueue)
+            .where(PostQueue.project_id == project_id, PostQueue.status == "pending")
+            .order_by(PostQueue.scheduled_time)
+        )
+        pending_posts = result.scalars().all()
+        
+        if not pending_posts:
+            return
+        
+        # Сохраняем данные постов
+        posts_data = [item.post_data for item in pending_posts]
+        
+        # Удаляем старые посты из очереди
+        for item in pending_posts:
+            await session.delete(item)
+        await session.commit()
+        
+        # Рассчитываем новые времена
+        interval_minutes = int(project.post_interval_hours * 60)
+        msk_now = get_moscow_time().replace(tzinfo=None)
+        
+        # Первый пост — ближайшее время, округлённое вверх до интервала
+        start_hour = project.active_hours_start
+        
+        # Округляем текущее время до следующего интервала
+        minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
+        if minutes_since_start < 0:
+            next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        else:
+            slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
+            next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+        
+        # Проверяем активные часы
+        if next_time.hour >= project.active_hours_end:
+            next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        
+        # Создаём новые посты в очереди
+        for i, post_data in enumerate(posts_data):
+            if i > 0:
+                next_time = next_time + timedelta(minutes=interval_minutes)
+                if next_time.hour >= project.active_hours_end:
+                    next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            
+            utc_time = next_time - timedelta(hours=3)
+            
+            queue_item = PostQueue(
+                project_id=project_id,
+                target_channel_id=pending_posts[0].target_channel_id,
+                platform=pending_posts[0].platform,
+                post_data=post_data,
+                scheduled_time=utc_time,
+                status="pending"
+            )
+            session.add(queue_item)
+        
+        await session.commit()
+        
+        logger.info(f"🔄 Queue recalculated for project {project_id}: {len(posts_data)} posts rescheduled with {interval_minutes} min interval")
 
 
 async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,7 +455,7 @@ async def set_post_interval_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def set_post_start_time_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение интервала и времени старта."""
+    """Сохранение интервала и времени старта + пересчёт очереди."""
     query = update.callback_query
     await query.answer()
     
@@ -413,7 +485,17 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         
         await query.edit_message_text(
             f"✅ Интервал обновлён: <b>{minutes} минут</b>\n"
-            f"🕐 Время старта без изменений.",
+            f"🕐 Время старта без изменений.\n\n"
+            f"🔄 Пересчитываю очередь публикаций...",
+            parse_mode="HTML"
+        )
+        
+        await recalc_queue_after_interval_change(project_id, context)
+        
+        await query.edit_message_text(
+            f"✅ Интервал обновлён: <b>{minutes} минут</b>\n"
+            f"🕐 Время старта без изменений.\n\n"
+            f"✅ Очередь пересчитана с новым интервалом.",
             parse_mode="HTML"
         )
         
@@ -440,7 +522,16 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         await query.edit_message_text(
             f"✅ Интервал: <b>{minutes} минут</b>\n"
             f"🌙 Режим: <b>круглосуточно</b>\n\n"
-            f"💡 Бот будет публиковать посты 24/7 каждые {minutes} минут.",
+            f"🔄 Пересчитываю очередь публикаций...",
+            parse_mode="HTML"
+        )
+        
+        await recalc_queue_after_interval_change(project_id, context)
+        
+        await query.edit_message_text(
+            f"✅ Интервал: <b>{minutes} минут</b>\n"
+            f"🌙 Режим: <b>круглосуточно</b>\n\n"
+            f"✅ Очередь пересчитана с новым интервалом.",
             parse_mode="HTML"
         )
         
@@ -471,8 +562,16 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
     await query.edit_message_text(
         f"✅ Интервал: <b>{minutes} минут</b>\n"
         f"🕐 Первая публикация в: <b>{time_str}</b>\n\n"
-        f"💡 Бот будет публиковать посты в {time_str} и далее\n"
-        f"каждые {minutes} минут до 23:00.",
+        f"🔄 Пересчитываю очередь публикаций...",
+        parse_mode="HTML"
+    )
+    
+    await recalc_queue_after_interval_change(project_id, context)
+    
+    await query.edit_message_text(
+        f"✅ Интервал: <b>{minutes} минут</b>\n"
+        f"🕐 Первая публикация в: <b>{time_str}</b>\n\n"
+        f"✅ Очередь пересчитана с новым интервалом.",
         parse_mode="HTML"
     )
     
@@ -609,14 +708,7 @@ async def set_signature_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await session.commit()
     
-    # Кнопка возврата в меню проекта
-    keyboard = [[InlineKeyboardButton("◀️ Вернуться в меню проекта", callback_data=f"project_menu_{project_id}")]]
-    
-    await update.message.reply_text(
-        reply_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+    await update.message.reply_text(reply_text, parse_mode="HTML")
     
     context.user_data.pop('temp_project_id', None)
     

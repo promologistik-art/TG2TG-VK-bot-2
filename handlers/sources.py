@@ -382,7 +382,6 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
     
-    # Обработка очистки стоп-фраз (без диалога)
     if data.startswith("edit_clear_phrases_"):
         source_id = int(data.replace("edit_clear_phrases_", ""))
         async with AsyncSessionLocal() as session:
@@ -620,17 +619,14 @@ async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAU
         
         current_phrases = source.exclude_phrases or ""
         
-        # Собираем существующие фразы в список
         existing_phrases = [p.strip() for p in current_phrases.split(",") if p.strip()]
         
-        # Добавляем новые фразы
         if new_phrases_text and new_phrases_text != "-":
             new_phrases = [p.strip() for p in new_phrases_text.split(",") if p.strip()]
             for phrase in new_phrases:
                 if phrase not in existing_phrases:
                     existing_phrases.append(phrase)
         
-        # Формируем обратно строку
         if existing_phrases:
             updated_phrases = ", ".join(existing_phrases)
         else:
@@ -763,13 +759,19 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
     source_id = int(query.data.replace("del_source_", ""))
     context.user_data['delete_source_id'] = source_id
     
+    # Получаем имя источника
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
+        source = result.scalar_one_or_none()
+        source_name = f"@{source.channel_username}" if source else "этот источник"
+    
     keyboard = [
         [InlineKeyboardButton("✅ Да, удалить", callback_data="confirm_delete_source"),
          InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_source")]
     ]
     
     await query.edit_message_text(
-        "⚠️ Удалить этот источник?\n\nПосты из этого источника больше не будут парситься.",
+        f"⚠️ Удалить источник {source_name}?\n\nПосты из этого источника больше не будут парситься.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -792,7 +794,6 @@ async def confirm_delete_source_callback(update: Update, context: ContextTypes.D
     
     await query.edit_message_text("✅ Источник удалён")
     
-    # Возвращаемся к списку источников
     await my_sources(update, context)
 
 
@@ -805,7 +806,6 @@ async def cancel_delete_source_callback(update: Update, context: ContextTypes.DE
     
     await query.edit_message_text("❌ Удаление отменено")
     
-    # Возвращаемся к списку источников
     await my_sources(update, context)
 
 

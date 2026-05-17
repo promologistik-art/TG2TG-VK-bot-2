@@ -180,13 +180,19 @@ async def clear_old_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def clear_failed_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        await update.message.reply_text("❌ Нет доступа")
+    """Очистка failed постов (доступно всем пользователям)."""
+    project = await require_project(update, context)
+    if not project:
         return
     
     msg = await update.message.reply_text("🧹 Очищаю failed посты...")
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(PostQueue).where(PostQueue.status == "failed"))
+        result = await session.execute(
+            delete(PostQueue).where(
+                PostQueue.project_id == project.id,
+                PostQueue.status == "failed"
+            )
+        )
         await session.commit()
     await msg.edit_text("✅ Failed посты удалены")
 

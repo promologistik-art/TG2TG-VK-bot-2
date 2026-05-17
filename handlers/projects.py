@@ -225,7 +225,7 @@ async def projects_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
-    elif data.startswith("confirm_delete_"):
+    elif data.startswith("confirm_delete_") and not data.startswith("confirm_delete_source"):
         project_id = int(data.replace("confirm_delete_", ""))
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SourceChannel).where(SourceChannel.project_id == project_id))
