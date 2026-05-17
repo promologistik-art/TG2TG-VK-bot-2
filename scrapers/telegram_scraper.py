@@ -328,6 +328,7 @@ class TelegramScraper:
                     return True
                 else:
                     logger.warning(f"❌ Failed to download media: HTTP {resp.status} for {media_url}")
-            except Exception as e:
-                logger.error(f"Download error: {e}")
+                    return False
+        except Exception as e:
+            logger.error(f"Download error: {e}")
             return False
