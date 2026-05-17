@@ -10,15 +10,13 @@ from utils import parse_number
 
 logger = logging.getLogger(__name__)
 
-# Маркеры рекламы
 AD_KEYWORDS = [
     '#реклама', '#спонсор', '#партнер', '#партнёр', '#ad', '#рекламныйпост',
     'реклама', 'спонсор', 'партнёрский', 'промо', 'сообщение от партнёра',
     'на правах рекламы', 'платное размещение', 'спонсируется', 'advertisement',
     '#sponsored', '#promo', '#sponsor',
-    # Банки и компании
     'сбер', 'сбербанк', 'sber', 'sberbank',
-    'альфа-банк', 'альфа банк', 'alfabank', 'alfabank',
+    'альфа-банк', 'альфа банк', 'alfabank',
     'втб', 'vtb',
     'тинькофф', 'тиньков', 'tinkoff',
     'мтс', 'mts',
@@ -39,18 +37,15 @@ AD_KEYWORDS = [
     'мкб', 'московский кредитный банк',
     'росбанк', 'rosbank',
     'ситибанк', 'citibank',
-    # Операторы связи
     'теле2', 'tele2',
     'yota', 'йота',
     'ростелеком', 'rostelecom',
     'дом.ру', 'domru',
-    # Маркетплейсы (часто реклама)
     'wildberries', 'вайлдберриз', 'вб',
     'ozon', 'озон',
     'яндекс маркет', 'yandex market',
     'алиэкспресс', 'aliexpress',
     'сбермегамаркет', 'мегамаркет',
-    # Кредиты и финансы
     'кредитная карта', 'кредит наличными',
     'дебетовая карта', 'оформить карту',
     'рефинансирование', 'ипотека',
@@ -58,7 +53,6 @@ AD_KEYWORDS = [
     'вклад под', 'накопительный счет',
     'инвестиции в', 'брокерский счет',
     'страхование жизни', 'осаго', 'каско',
-    # Общие рекламные паттерны
     'узнать подробнее на сайте',
     'перейти на сайт',
     'жми на ссылку',
@@ -180,7 +174,6 @@ class TelegramScraper:
         media_type = None
         video_duration = 0
         
-        # Фото
         photo_wrap = msg_div.find("a", class_="tgme_widget_message_photo_wrap")
         if photo_wrap:
             has_photo = True
@@ -194,7 +187,6 @@ class TelegramScraper:
                 if bg_match:
                     media_url = bg_match.group(1)
         
-        # Галерея
         if not has_photo:
             gallery = msg_div.find("div", class_="tgme_widget_message_album_wrap")
             if gallery:
@@ -206,7 +198,6 @@ class TelegramScraper:
                     if img:
                         media_url = img.get("src")
         
-        # Видео
         if not has_photo:
             video = msg_div.find("video")
             if video:
@@ -221,7 +212,6 @@ class TelegramScraper:
                     except:
                         video_duration = 0
         
-        # Круглое видео
         if not has_photo and not has_video:
             round_video = msg_div.find("video", class_="tgme_widget_message_roundvideo")
             if round_video:
@@ -308,21 +298,36 @@ class TelegramScraper:
         return total
 
     async def download_media(self, media_url: str, save_path: str) -> bool:
+        """Скачать медиафайл с правильными заголовками."""
         try:
             if not media_url:
                 return False
+            
             headers = {
                 "User-Agent": Config.SCRAPER_USER_AGENT,
                 "Referer": "https://t.me/",
+                "Origin": "https://t.me",
+                "Accept": "video/mp4,video/*,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Sec-Fetch-Dest": "video",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "cross-site",
             }
-            async with self.session.get(media_url, headers=headers, timeout=60) as resp:
+            
+            async with self.session.get(media_url, headers=headers, timeout=60, allow_redirects=True) as resp:
                 if resp.status == 200:
                     content = await resp.read()
-                    if len(content) < 100:
+                    if len(content) < 1000:
+                        logger.warning(f"Downloaded file too small: {len(content)} bytes from {media_url}")
                         return False
                     with open(save_path, "wb") as f:
                         f.write(content)
+                    logger.info(f"✅ Downloaded media to {save_path} ({len(content)} bytes)")
                     return True
-        except Exception as e:
-            logger.error(f"Download failed: {e}")
-        return False
+                else:
+                    logger.warning(f"❌ Failed to download media: HTTP {resp.status} for {media_url}")
+            except Exception as e:
+                logger.error(f"Download error: {e}")
+            return False
