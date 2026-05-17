@@ -108,19 +108,24 @@ async def main():
     app.add_handler(CommandHandler("cancel", cancel))
     
     # ============ CallbackQueryHandlers ============
+    # Админские обработчики
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
-    app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
-    app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
-    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
-    
+    # СНАЧАЛА обработчики для источников (с более специфичными паттернами)
     app.add_handler(CallbackQueryHandler(edit_source_callback, pattern="^edit_source_"))
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
     app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
-    app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
+    
+    # Обработчики для целей
+    app.add_handler(CallbackQueryHandler(delete_target_callback, pattern="^del_target_"))
+    
+    # Обработчики для проектов
+    app.add_handler(CallbackQueryHandler(project_menu_callback, pattern="^project_menu_"))
+    app.add_handler(CallbackQueryHandler(back_to_projects_callback, pattern="^back_to_projects$"))
+    app.add_handler(CallbackQueryHandler(projects_callback, pattern="^(create_project|select_project_|delete_project_|confirm_delete_|cancel_delete|stats_project_|project_sources_|project_change_target_)"))
     
     # ============ ConversationHandlers ============
     add_source_conv = ConversationHandler(
