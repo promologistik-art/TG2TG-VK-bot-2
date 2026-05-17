@@ -769,45 +769,58 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
          InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_source")]
     ]
     
-    # Отправляем новое сообщение вместо редактирования
     await query.message.reply_text(
         f"⚠️ Удалить источник {source_name}?\n\nПосты из этого источника больше не будут парситься.",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    await query.delete_message()  # удаляем старое сообщение с кнопкой "Удалить"
+    await query.delete_message()
 
 
 async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления источника."""
+    logger.info("=== confirm_delete_source_callback START ===")
     query = update.callback_query
+    logger.info(f"query.data: {query.data}")
     await query.answer()
+    logger.info("after answer")
     
     source_id = context.user_data.get('delete_source_id')
+    logger.info(f"source_id from user_data: {source_id}")
+    
     if not source_id:
         await query.edit_message_text("❌ Ошибка: источник не найден")
+        logger.info("source_id not found, returning")
         return
     
     async with AsyncSessionLocal() as session:
+        logger.info("deleting source from DB...")
         await session.execute(delete(SourceChannel).where(SourceChannel.id == source_id))
         await session.commit()
+        logger.info("source deleted")
     
     context.user_data.pop('delete_source_id', None)
     
     await query.edit_message_text("✅ Источник удалён")
+    logger.info("message sent")
     
     await my_sources(update, context)
+    logger.info("=== confirm_delete_source_callback END ===")
 
 
 async def cancel_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена удаления источника."""
+    logger.info("=== cancel_delete_source_callback START ===")
     query = update.callback_query
+    logger.info(f"query.data: {query.data}")
     await query.answer()
     
     context.user_data.pop('delete_source_id', None)
     
     await query.edit_message_text("❌ Удаление отменено")
+    logger.info("message sent")
     
     await my_sources(update, context)
+    logger.info("=== cancel_delete_source_callback END ===")
 
 
 # ============ ВОЗВРАТ К ИСТОЧНИКАМ ============
