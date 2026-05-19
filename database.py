@@ -56,7 +56,7 @@ async def migrate_to_projects():
             await session.commit()
             logger.info("Migration completed")
         
-        # Все миграции
+        # Существующие миграции
         migrations = [
             "ALTER TABLE users ADD COLUMN max_projects INTEGER DEFAULT 1",
             "ALTER TABLE users ADD COLUMN max_sources_per_project INTEGER DEFAULT 3",
@@ -85,8 +85,24 @@ async def migrate_to_projects():
         for sql in migrations:
             try:
                 await session.execute(text(sql))
-            except:
-                pass
+            except Exception as e:
+                if "duplicate column name" not in str(e).lower():
+                    logger.debug(f"Migration {sql[:50]}... skipped: {e}")
+        
+        # НОВЫЕ МИГРАЦИИ для ключевых слов и возраста постов
+        try:
+            await session.execute(text("ALTER TABLE source_channels ADD COLUMN include_keywords TEXT"))
+            logger.info("Added column include_keywords to source_channels")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"Failed to add include_keywords: {e}")
+        
+        try:
+            await session.execute(text("ALTER TABLE source_channels ADD COLUMN max_age_hours INTEGER DEFAULT 24"))
+            logger.info("Added column max_age_hours to source_channels")
+        except Exception as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.warning(f"Failed to add max_age_hours: {e}")
         
         try:
             await session.execute(text("UPDATE parsed_posts SET project_id = (SELECT project_id FROM source_channels WHERE source_channels.id = parsed_posts.source_channel_id) WHERE project_id IS NULL"))
