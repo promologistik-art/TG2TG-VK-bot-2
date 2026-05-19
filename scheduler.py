@@ -148,10 +148,9 @@ class Scheduler:
         """Скачивание медиа с повторными попытками."""
         for attempt in range(max_retries):
             if await scraper.download_media(media_url, save_path):
-                # Проверяем размер файла
                 try:
                     file_size = os.path.getsize(save_path)
-                    if file_size < 1000:  # меньше 1KB — битый файл
+                    if file_size < 1000:
                         logger.warning(f"Downloaded file too small: {file_size} bytes (attempt {attempt + 1})")
                         os.remove(save_path)
                         if attempt < max_retries - 1:
@@ -171,49 +170,6 @@ class Scheduler:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(3)
         return False
-
-    async def _calculate_next_post_time(self, project, user, msk_now):
-        """Рассчитывает ближайшее время для первого поста."""
-        interval_minutes = max(
-            int(project.post_interval_hours * 60),
-            user.min_post_interval_minutes,
-            Config.MIN_POST_INTERVAL_MINUTES
-        )
-        
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(PostQueue).where(
-                    PostQueue.project_id == project.id
-                ).order_by(PostQueue.scheduled_time.desc()).limit(1)
-            )
-            last_queued = result.scalar_one_or_none()
-        
-        if last_queued:
-            last_msk = last_queued.scheduled_time + timedelta(hours=3)
-            next_time = last_msk + timedelta(minutes=interval_minutes)
-            if next_time < msk_now:
-                # Если последний пост в прошлом, считаем от текущего времени
-                slots_passed = ((msk_now - next_time).total_seconds() / 60) // interval_minutes + 1
-                next_time = next_time + timedelta(minutes=slots_passed * interval_minutes)
-        else:
-            # Первый пост — ближайшее время, округлённое вверх до интервала
-            start_hour = project.active_hours_start
-            
-            # Округляем текущее время до следующего интервала
-            minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
-            if minutes_since_start < 0:
-                # Ещё не наступил start_hour
-                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-            else:
-                # Округляем до следующего интервала
-                slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
-                next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
-            
-            # Проверяем активные часы
-            if next_time.hour >= project.active_hours_end:
-                next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        
-        return next_time
 
     async def _process_project(self, project: Project):
         logger.info(f"🔍 Processing project '{project.name}' (ID: {project.id})")
@@ -274,6 +230,26 @@ class Scheduler:
                     
                     if post.get("is_advertisement", False):
                         continue
+                    
+                    # ===== ПРОВЕРКА ВОЗРАСТА ПОСТА =====
+                    if source.max_age_hours and source.max_age_hours > 0:
+                        if post.get("datetime"):
+                            try:
+                                post_time = datetime.fromisoformat(post["datetime"].replace("Z", "+00:00"))
+                                age_hours = (datetime.utcnow() - post_time).total_seconds() / 3600
+                                if age_hours > source.max_age_hours:
+                                    logger.debug(f"⏭️ Post too old: {age_hours:.1f}h > {source.max_age_hours}h")
+                                    continue
+                            except:
+                                pass
+                    
+                    # ===== ПРОВЕРКА КЛЮЧЕВЫХ СЛОВ =====
+                    if source.include_keywords:
+                        keywords = [k.strip().lower() for k in source.include_keywords.split(",") if k.strip()]
+                        post_text = post.get("text", "").lower()
+                        if not any(keyword in post_text for keyword in keywords):
+                            logger.debug(f"⏭️ No keywords in post from @{source.channel_username}")
+                            continue
                     
                     media_type = post.get("media_type")
                     has_media = post.get("has_media", False)
@@ -385,10 +361,26 @@ class Scheduler:
             
             for i, post in enumerate(posts_to_publish):
                 if i == 0:
-                    next_time = await self._calculate_next_post_time(project, user, msk_now)
+                    # Первый пост — рассчитываем с учётом текущего времени и активных часов
+                    interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
+                    start_hour = project.active_hours_start
+                    end_hour = project.active_hours_end
+                    
+                    # Округляем до следующего интервала
+                    minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
+                    if minutes_since_start < 0:
+                        next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+                    else:
+                        slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
+                        next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+                    
+                    if next_time.hour >= end_hour:
+                        next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 else:
                     interval_minutes = max(int(project.post_interval_hours * 60), user.min_post_interval_minutes, Config.MIN_POST_INTERVAL_MINUTES)
                     next_time = next_time + timedelta(minutes=interval_minutes)
+                    if next_time.hour >= project.active_hours_end:
+                        next_time = next_time.replace(hour=project.active_hours_start, minute=0, second=0, microsecond=0) + timedelta(days=1)
                 
                 utc_time = next_time - timedelta(hours=3)
                 

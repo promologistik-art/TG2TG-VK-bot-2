@@ -61,7 +61,9 @@ class SourceChannel(Base):
     media_filter = Column(String, default="all")
     remove_original_text = Column(Boolean, default=False)
     max_video_duration = Column(Integer, nullable=True)
-    exclude_phrases = Column(String, nullable=True)  # Новое поле: стоп-фразы через запятую
+    exclude_phrases = Column(String, nullable=True)
+    include_keywords = Column(String, nullable=True)  # НОВОЕ ПОЛЕ: ключевые слова через запятую
+    max_age_hours = Column(Integer, default=24)  # НОВОЕ ПОЛЕ: максимальный возраст поста в часах
     is_active = Column(Boolean, default=True)
     added_at = Column(DateTime, default=datetime.utcnow)
     last_parsed = Column(DateTime, nullable=True)
@@ -74,15 +76,12 @@ class TargetChannel(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
     user_id = Column(BigInteger, nullable=True)
     
-    # Платформа: telegram или vk
     platform = Column(String, default="telegram")
     
-    # Telegram
     channel_id = Column(BigInteger, nullable=True)
     channel_username = Column(String, nullable=True)
     channel_title = Column(String, nullable=True)
     
-    # VK
     vk_token = Column(String, nullable=True)
     vk_group_id = Column(BigInteger, nullable=True)
     vk_group_name = Column(String, nullable=True)
