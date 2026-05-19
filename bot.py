@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""
+Simpleparcer Bot
+Version: 1.9.05 (19.05.2026)
+"""
+
 import asyncio
 import logging
 import sys
@@ -20,7 +25,9 @@ from handlers import (
     confirm_delete_source_callback, cancel_delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input, back_to_sources_callback,
+    edit_exclude_phrases_input, edit_keywords_input,
+    add_keywords_yes_callback, add_keywords_skip_callback, process_keywords_input,
+    back_to_sources_callback,
     add_target_start, add_target_forward, add_target_continue_callback,
     my_targets, delete_target_callback,
     set_interval_start, set_interval_callback,
@@ -43,7 +50,7 @@ from handlers import (
     AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
     AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
-    AWAITING_BROADCAST_MESSAGE
+    AWAITING_BROADCAST_MESSAGE, AWAITING_KEYWORDS, AWAITING_EDIT_KEYWORDS
 )
 
 from posters import TelegramPoster
@@ -108,7 +115,6 @@ async def main():
     app.add_handler(CommandHandler("cancel", cancel))
     
     # ============ CallbackQueryHandlers ============
-    # Админские обработчики
     app.add_handler(CallbackQueryHandler(admin_back_callback, pattern="^admin_back$"))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^(admin_|user_manage_|tariff_set_|user_tariff_|extend_user_|deactivate_user_|activate_user_|tariff_for_|set_tariff_|admin_set_tariff|admin_extend_trial|admin_deactivate|admin_activate)"))
     
@@ -117,6 +123,8 @@ async def main():
     app.add_handler(CallbackQueryHandler(delete_source_callback, pattern="^del_source_"))
     app.add_handler(CallbackQueryHandler(confirm_delete_source_callback, pattern="^confirm_delete_source$"))
     app.add_handler(CallbackQueryHandler(cancel_delete_source_callback, pattern="^cancel_delete_source$"))
+    app.add_handler(CallbackQueryHandler(add_keywords_yes_callback, pattern="^add_keywords_yes$"))
+    app.add_handler(CallbackQueryHandler(add_keywords_skip_callback, pattern="^add_keywords_skip$"))
     app.add_handler(CallbackQueryHandler(back_to_sources_callback, pattern="^back_to_sources$"))
     
     # Обработчики для целей
@@ -168,12 +176,21 @@ async def main():
                 CommandHandler("help", help_command),
                 CommandHandler("cancel", cancel),
             ],
+            AWAITING_KEYWORDS: [
+                CallbackQueryHandler(add_keywords_yes_callback, pattern="^add_keywords_yes$"),
+                CallbackQueryHandler(add_keywords_skip_callback, pattern="^add_keywords_skip$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_keywords_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     edit_source_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases)_")],
+        entry_points=[CallbackQueryHandler(edit_source_start, pattern="^edit_(criteria|media|text|phrases|clear_phrases|keywords)_")],
         states={
             AWAITING_EDIT_VIEWS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_views_input),
@@ -206,8 +223,15 @@ async def main():
                 CommandHandler("help", help_command),
                 CommandHandler("cancel", cancel),
             ],
+            AWAITING_EDIT_KEYWORDS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, edit_keywords_input),
+                CommandHandler("start", start),
+                CommandHandler("help", help_command),
+                CommandHandler("cancel", cancel),
+            ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     add_target_conv = ConversationHandler(
@@ -223,7 +247,8 @@ async def main():
                 CommandHandler("cancel", cancel),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     set_interval_conv = ConversationHandler(
@@ -239,7 +264,8 @@ async def main():
                 CommandHandler("cancel", cancel),
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     set_post_interval_conv = ConversationHandler(
@@ -261,7 +287,8 @@ async def main():
                 CommandHandler("cancel", cancel),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     set_signature_conv = ConversationHandler(
@@ -277,7 +304,8 @@ async def main():
                 CommandHandler("cancel", cancel),
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     broadcast_conv = ConversationHandler(
@@ -290,7 +318,8 @@ async def main():
                 CommandHandler("cancel", cancel),
             ]
         },
-        fallbacks=[CommandHandler("cancel", cancel)]
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False
     )
     
     app.add_handler(add_source_conv)
@@ -307,7 +336,7 @@ async def main():
     await app.start()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     
-    logger.info("🟢 Bot started")
+    logger.info("🟢 Bot started (version 1.9.05)")
     
     try:
         await asyncio.Event().wait()
