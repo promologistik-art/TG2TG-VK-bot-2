@@ -4,7 +4,8 @@ from .constants import (
     AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT,
     AWAITING_TARIFF_SELECT, AWAITING_BROADCAST_MESSAGE,
-    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES
+    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
+    AWAITING_KEYWORDS, AWAITING_EDIT_KEYWORDS
 )
 
 from .common import start, help_command, cancel
@@ -20,7 +21,8 @@ from .sources import (
     confirm_delete_source_callback, cancel_delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input, back_to_sources_callback
+    edit_exclude_phrases_input, edit_keywords_input,  # НОВАЯ ФУНКЦИЯ
+    back_to_sources_callback
 )
 from .targets import (
     add_target_start, add_target_forward, add_target_continue_callback,

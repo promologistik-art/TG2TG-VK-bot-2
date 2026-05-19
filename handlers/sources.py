@@ -8,9 +8,12 @@ from scrapers import TelegramScraper
 from utils import extract_channel_username
 from .utils import require_project, get_sources_count, get_project_target, send_project_ready_message, check_action_limit, check_user_access
 from .constants import (
-    AWAITING_SOURCE_USERNAME, AWAITING_CRITERIA, AWAITING_VIEWS, AWAITING_REACTIONS,
+    AWAITING_SOURCE_USERNAME, AWAITING_TARGET_FORWARD, AWAITING_CRITERIA,
+    AWAITING_INTERVAL, AWAITING_VIEWS, AWAITING_REACTIONS, AWAITING_SIGNATURE,
+    AWAITING_POST_INTERVAL, AWAITING_POST_START_TIME,
     AWAITING_MEDIA_FILTER, AWAITING_REMOVE_TEXT, CURRENT_PROJECT_KEY,
-    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES
+    AWAITING_EDIT_VIEWS, AWAITING_EDIT_REACTIONS, AWAITING_EDIT_EXCLUDE_PHRASES,
+    AWAITING_KEYWORDS, AWAITING_EDIT_KEYWORDS
 )
 
 logger = logging.getLogger(__name__)
@@ -267,10 +270,12 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             criteria=criteria,
             media_filter=media_filter,
             remove_original_text=remove_text,
-            max_video_duration=max_video_duration
+            max_video_duration=max_video_duration,
+            max_age_hours=24  # По умолчанию 24 часа
         )
         session.add(channel)
         await session.commit()
+        context.user_data['temp_source_id'] = channel.id
     
     filter_text = {"all": "все", "photo_only": "только фото", "video_only": "только видео"}.get(media_filter, "все")
     
@@ -290,33 +295,131 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await query.edit_message_text("\n".join(text_parts))
     
-    project_id = temp['project_id']
-    project_name = temp['project_name']
+    # Спрашиваем про ключевые слова
+    keyboard = [
+        [InlineKeyboardButton("✅ Добавить ключевые слова", callback_data="add_keywords_yes")],
+        [InlineKeyboardButton("⏭️ Пропустить", callback_data="add_keywords_skip")]
+    ]
     
-    for key in ['temp_source', 'temp_project_id', 'temp_project_name', 'temp_criteria',
-                'temp_criteria_views', 'temp_media_filter', 'temp_max_video_duration',
-                'awaiting_criteria', 'awaiting_duration', 'awaiting_text_choice']:
-        context.user_data.pop(key, None)
+    await query.message.reply_text(
+        f"🔍 <b>Ключевые слова для поиска</b>\n\n"
+        f"Вы можете указать ключевые слова (через запятую).\n"
+        f"Бот будет публиковать только посты, содержащие эти слова.\n\n"
+        f"Если пропустить — будут публиковаться все посты.\n\n"
+        f"<i>Посты старше 24 часов автоматически игнорируются.</i>",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="HTML"
+    )
+    return AWAITING_KEYWORDS
+
+
+async def add_keywords_yes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь хочет добавить ключевые слова."""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🔍 <b>Введите ключевые слова</b>\n\n"
+        "Введите слова или фразы через запятую.\n"
+        "Пример: <code>искусственный интеллект, нейросети, ChatGPT</code>\n\n"
+        "Бот будет публиковать только посты, содержащие хотя бы одно из этих слов.\n\n"
+        "Отправьте <code>-</code> чтобы пропустить.",
+        parse_mode="HTML"
+    )
+    return AWAITING_KEYWORDS
+
+
+async def add_keywords_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пользователь пропустил добавление ключевых слов."""
+    query = update.callback_query
+    await query.answer()
+    
+    source_id = context.user_data.get('temp_source_id')
+    project_id = context.user_data.get('temp_project_id')
+    project_name = context.user_data.get('temp_project_name')
+    
+    await query.edit_message_text("✅ Источник добавлен! Ключевые слова не указаны.")
+    
+    # Очищаем временные данные
+    context.user_data.pop('temp_source_id', None)
+    context.user_data.pop('temp_source', None)
+    context.user_data.pop('temp_project_id', None)
+    context.user_data.pop('temp_project_name', None)
+    context.user_data.pop('temp_criteria', None)
+    context.user_data.pop('temp_criteria_views', None)
+    context.user_data.pop('temp_media_filter', None)
+    context.user_data.pop('temp_max_video_duration', None)
+    context.user_data.pop('awaiting_criteria', None)
+    context.user_data.pop('awaiting_duration', None)
+    context.user_data.pop('awaiting_text_choice', None)
     
     sources_count = await get_sources_count(project_id)
     target_channel = await get_project_target(project_id)
     
-    if target_channel:
-        if sources_count == 1:
-            await query.message.reply_text(
-                f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
-                f"• /set_interval — настроить частоту парсинга\n"
-                f"• /set_post_interval — интервал публикаций\n"
-                f"• /set_signature — добавить подпись\n"
-                f"• /parse — запустить парсинг\n"
-                f"• /add_source — добавить ещё источник",
-                parse_mode="HTML"
-            )
-        else:
-            await query.message.reply_text(
-                f"✅ Источник добавлен! Всего источников: {sources_count}",
-                parse_mode="HTML"
-            )
+    if target_channel and sources_count >= 1:
+        await query.message.reply_text(
+            f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
+            f"• /set_interval — настроить частоту парсинга\n"
+            f"• /set_post_interval — интервал публикаций\n"
+            f"• /set_signature — добавить подпись\n"
+            f"• /parse — запустить парсинг\n"
+            f"• /add_source — добавить ещё источник",
+            parse_mode="HTML"
+        )
+    
+    return ConversationHandler.END
+
+
+async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода ключевых слов."""
+    text = update.message.text.strip()
+    source_id = context.user_data.get('temp_source_id')
+    project_id = context.user_data.get('temp_project_id')
+    project_name = context.user_data.get('temp_project_name')
+    
+    if text == "-":
+        keywords = None
+        reply = "✅ Источник добавлен! Ключевые слова не указаны."
+    else:
+        keywords = text
+        reply = f"✅ Источник добавлен!\n\n🔍 Ключевые слова: {keywords}"
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(SourceChannel)
+            .where(SourceChannel.id == source_id)
+            .values(include_keywords=keywords)
+        )
+        await session.commit()
+    
+    await update.message.reply_text(reply)
+    
+    # Очищаем временные данные
+    context.user_data.pop('temp_source_id', None)
+    context.user_data.pop('temp_source', None)
+    context.user_data.pop('temp_project_id', None)
+    context.user_data.pop('temp_project_name', None)
+    context.user_data.pop('temp_criteria', None)
+    context.user_data.pop('temp_criteria_views', None)
+    context.user_data.pop('temp_media_filter', None)
+    context.user_data.pop('temp_max_video_duration', None)
+    context.user_data.pop('awaiting_criteria', None)
+    context.user_data.pop('awaiting_duration', None)
+    context.user_data.pop('awaiting_text_choice', None)
+    
+    sources_count = await get_sources_count(project_id)
+    target_channel = await get_project_target(project_id)
+    
+    if target_channel and sources_count >= 1:
+        await update.message.reply_text(
+            f"✅ <b>Проект «{project_name}» готов к работе!</b>\n\n"
+            f"• /set_interval — настроить частоту парсинга\n"
+            f"• /set_post_interval — интервал публикаций\n"
+            f"• /set_signature — добавить подпись\n"
+            f"• /parse — запустить парсинг\n"
+            f"• /add_source — добавить ещё источник",
+            parse_mode="HTML"
+        )
     
     return ConversationHandler.END
 
@@ -361,6 +464,8 @@ async def show_edit_source_menu(query, source_id: int):
         f"🎬 Длительность видео: {'до ' + str(source.max_video_duration) + 'с' if source.max_video_duration else 'без ограничений'}\n"
         f"📝 Текст: {'удаляется' if source.remove_original_text else 'оставляется'}\n"
         f"🚫 Стоп-фразы: {source.exclude_phrases or 'нет'}\n"
+        f"🔍 Ключевые слова: {source.include_keywords or 'не указаны'}\n"
+        f"⏰ Макс. возраст поста: {source.max_age_hours or 24} ч\n"
     )
     
     keyboard = [
@@ -368,6 +473,7 @@ async def show_edit_source_menu(query, source_id: int):
         [InlineKeyboardButton("📷 Изменить тип контента", callback_data=f"edit_media_{source_id}")],
         [InlineKeyboardButton("📝 Изменить обработку текста", callback_data=f"edit_text_{source_id}")],
         [InlineKeyboardButton("🚫 Изменить стоп-фразы", callback_data=f"edit_phrases_{source_id}")],
+        [InlineKeyboardButton("🔍 Изменить ключевые слова", callback_data=f"edit_keywords_{source_id}")],
         [InlineKeyboardButton("🗑️ Очистить стоп-фразы", callback_data=f"edit_clear_phrases_{source_id}")],
         [InlineKeyboardButton("◀️ Назад к источникам", callback_data="back_to_sources")],
     ]
@@ -446,6 +552,24 @@ async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]])
         )
         return AWAITING_EDIT_EXCLUDE_PHRASES
+    
+    elif data.startswith("edit_keywords_"):
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
+            source = result.scalar_one()
+        
+        current = source.include_keywords or "не указаны"
+        
+        await query.edit_message_text(
+            f"🔍 <b>Ключевые слова</b>\n\n"
+            f"Текущие: {current}\n\n"
+            f"Введите новые ключевые слова через запятую.\n"
+            f"Пример: <code>искусственный интеллект, нейросети</code>\n\n"
+            f"Отправьте <code>-</code> чтобы очистить.\n"
+            f"/cancel — отмена",
+            parse_mode="HTML"
+        )
+        return AWAITING_EDIT_KEYWORDS
     
     return ConversationHandler.END
 
@@ -674,6 +798,58 @@ async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAU
     return ConversationHandler.END
 
 
+async def edit_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранение ключевых слов."""
+    text = update.message.text.strip()
+    source_id = context.user_data.get('edit_source_id')
+    
+    if text == "-":
+        keywords = None
+        reply = "✅ Ключевые слова очищены"
+    else:
+        keywords = text
+        reply = f"✅ Ключевые слова обновлены: {keywords}"
+    
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            sql_update(SourceChannel)
+            .where(SourceChannel.id == source_id)
+            .values(include_keywords=keywords)
+        )
+        await session.commit()
+    
+    await update.message.reply_text(reply)
+    
+    class FakeQuery:
+        def __init__(self, chat_id, message_id, bot):
+            self.message = type('obj', (object,), {
+                'chat_id': chat_id,
+                'message_id': message_id
+            })
+            self.bot = bot
+        async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+            await self.bot.edit_message_text(
+                text=text,
+                chat_id=self.message.chat_id,
+                message_id=self.message.message_id,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        async def answer(self):
+            pass
+    
+    fake_query = FakeQuery(
+        update.message.chat_id,
+        update.message.message_id - 1,
+        context.bot
+    )
+    
+    await show_edit_source_menu(fake_query, source_id)
+    
+    context.user_data.pop('edit_source_id', None)
+    return ConversationHandler.END
+
+
 # ============ СПИСОК ИСТОЧНИКОВ ============
 
 async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -728,6 +904,8 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f" | 📝 {'без текста' if src.remove_original_text else 'с текстом'}"
         if src.exclude_phrases:
             text += f"\n   🚫 Стоп-фразы: {src.exclude_phrases}"
+        if src.include_keywords:
+            text += f"\n   🔍 Ключевые слова: {src.include_keywords}"
         if src.last_parsed:
             text += f"\n   🕐 {src.last_parsed.strftime('%d.%m.%Y %H:%M')}"
         text += "\n\n"
@@ -778,49 +956,35 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления источника."""
-    logger.info("=== confirm_delete_source_callback START ===")
     query = update.callback_query
-    logger.info(f"query.data: {query.data}")
     await query.answer()
-    logger.info("after answer")
     
     source_id = context.user_data.get('delete_source_id')
-    logger.info(f"source_id from user_data: {source_id}")
-    
     if not source_id:
         await query.edit_message_text("❌ Ошибка: источник не найден")
-        logger.info("source_id not found, returning")
         return
     
     async with AsyncSessionLocal() as session:
-        logger.info("deleting source from DB...")
         await session.execute(delete(SourceChannel).where(SourceChannel.id == source_id))
         await session.commit()
-        logger.info("source deleted")
     
     context.user_data.pop('delete_source_id', None)
     
     await query.edit_message_text("✅ Источник удалён")
-    logger.info("message sent")
     
     await my_sources(update, context)
-    logger.info("=== confirm_delete_source_callback END ===")
 
 
 async def cancel_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена удаления источника."""
-    logger.info("=== cancel_delete_source_callback START ===")
     query = update.callback_query
-    logger.info(f"query.data: {query.data}")
     await query.answer()
     
     context.user_data.pop('delete_source_id', None)
     
     await query.edit_message_text("❌ Удаление отменено")
-    logger.info("message sent")
     
     await my_sources(update, context)
-    logger.info("=== cancel_delete_source_callback END ===")
 
 
 # ============ ВОЗВРАТ К ИСТОЧНИКАМ ============
