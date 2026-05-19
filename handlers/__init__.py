@@ -21,7 +21,8 @@ from .sources import (
     confirm_delete_source_callback, cancel_delete_source_callback,
     edit_source_start, edit_views_input, edit_reactions_input,
     edit_media_filter_callback, edit_duration_callback, edit_remove_text_callback,
-    edit_exclude_phrases_input, edit_keywords_input,  # НОВАЯ ФУНКЦИЯ
+    edit_exclude_phrases_input, edit_keywords_input,
+    add_keywords_yes_callback, add_keywords_skip_callback, process_keywords_input,
     back_to_sources_callback
 )
 from .targets import (
