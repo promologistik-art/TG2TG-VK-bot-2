@@ -56,16 +56,36 @@ async def show_project_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await project_menu_callback(fake_update, context)
 
 
+async def get_next_valid_time(msk_now: datetime, start_hour: int, end_hour: int, interval_minutes: int) -> datetime:
+    """Возвращает ближайшее допустимое время публикации с учётом активных часов."""
+    # Если сейчас раньше начала активных часов
+    if msk_now.hour < start_hour:
+        return msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    
+    # Если сейчас в активных часах
+    if start_hour <= msk_now.hour < end_hour:
+        # Округляем до следующего интервала
+        minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
+        slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
+        next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+        
+        # Если следующий пост выходит за пределы активных часов
+        if next_time.hour >= end_hour:
+            return next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        return next_time
+    
+    # Если сейчас после активных часов
+    return msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+
 async def recalc_queue_after_interval_change(project_id: int, context: ContextTypes.DEFAULT_TYPE):
-    """Пересчитывает очередь после изменения интервала постинга."""
+    """Пересчитывает очередь после изменения интервала постинга с учётом активных часов."""
     from utils import get_moscow_time
     
     async with AsyncSessionLocal() as session:
-        # Получаем проект
         result = await session.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one()
         
-        # Получаем все pending посты в порядке очереди
         result = await session.execute(
             select(PostQueue)
             .where(PostQueue.project_id == project_id, PostQueue.status == "pending")
@@ -76,38 +96,26 @@ async def recalc_queue_after_interval_change(project_id: int, context: ContextTy
         if not pending_posts:
             return
         
-        # Сохраняем данные постов
         posts_data = [item.post_data for item in pending_posts]
         
-        # Удаляем старые посты из очереди
         for item in pending_posts:
             await session.delete(item)
         await session.commit()
         
-        # Рассчитываем новые времена
         interval_minutes = int(project.post_interval_hours * 60)
         msk_now = get_moscow_time().replace(tzinfo=None)
         
-        # Первый пост — ближайшее время, округлённое вверх до интервала
         start_hour = project.active_hours_start
+        end_hour = project.active_hours_end
         
-        # Округляем текущее время до следующего интервала
-        minutes_since_start = (msk_now.hour - start_hour) * 60 + msk_now.minute
-        if minutes_since_start < 0:
-            next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
-        else:
-            slots = (minutes_since_start + interval_minutes - 1) // interval_minutes
-            next_time = msk_now.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(minutes=slots * interval_minutes)
+        # Первый пост — ближайшее допустимое время
+        next_time = await get_next_valid_time(msk_now, start_hour, end_hour, interval_minutes)
         
-        # Проверяем активные часы
-        if next_time.hour >= project.active_hours_end:
-            next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        
-        # Создаём новые посты в очереди
         for i, post_data in enumerate(posts_data):
             if i > 0:
                 next_time = next_time + timedelta(minutes=interval_minutes)
-                if next_time.hour >= project.active_hours_end:
+                # Если вышли за пределы активных часов — переносим на следующий день
+                if next_time.hour >= end_hour or (i == 0 and next_time.hour >= end_hour):
                     next_time = next_time.replace(hour=start_hour, minute=0, second=0, microsecond=0) + timedelta(days=1)
             
             utc_time = next_time - timedelta(hours=3)
@@ -124,7 +132,7 @@ async def recalc_queue_after_interval_change(project_id: int, context: ContextTy
         
         await session.commit()
         
-        logger.info(f"🔄 Queue recalculated for project {project_id}: {len(posts_data)} posts rescheduled with {interval_minutes} min interval")
+        logger.info(f"🔄 Queue recalculated for project {project_id}: {len(posts_data)} posts rescheduled with {interval_minutes} min interval (active hours: {start_hour}:00-{end_hour}:00)")
 
 
 async def reset_all_dialogs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -495,7 +503,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         await query.edit_message_text(
             f"✅ Интервал обновлён: <b>{minutes} минут</b>\n"
             f"🕐 Время старта без изменений.\n\n"
-            f"✅ Очередь пересчитана с новым интервалом.",
+            f"✅ Очередь пересчитана с учётом активных часов.",
             parse_mode="HTML"
         )
         
@@ -531,7 +539,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
         await query.edit_message_text(
             f"✅ Интервал: <b>{minutes} минут</b>\n"
             f"🌙 Режим: <b>круглосуточно</b>\n\n"
-            f"✅ Очередь пересчитана с новым интервалом.",
+            f"✅ Очередь пересчитана.",
             parse_mode="HTML"
         )
         
@@ -571,7 +579,7 @@ async def set_post_start_time_callback(update: Update, context: ContextTypes.DEF
     await query.edit_message_text(
         f"✅ Интервал: <b>{minutes} минут</b>\n"
         f"🕐 Первая публикация в: <b>{time_str}</b>\n\n"
-        f"✅ Очередь пересчитана с новым интервалом.",
+        f"✅ Очередь пересчитана с учётом активных часов.",
         parse_mode="HTML"
     )
     

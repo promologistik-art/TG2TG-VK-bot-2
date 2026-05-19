@@ -5,13 +5,16 @@ from telegram.ext import ContextTypes
 from sqlalchemy import select
 from database import AsyncSessionLocal
 from models import User, Project, PostQueue, SourceChannel
-from .utils import require_project, get_sources_count, get_project_target, TARIFF_LIMITS
+from .utils import require_project, get_sources_count, get_project_target, TARIFF_LIMITS, is_admin
 
 logger = logging.getLogger(__name__)
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     telegram_id = update.effective_user.id
+    
+    # Проверяем, админ ли пользователь
+    admin = await is_admin(telegram_id)
     
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
@@ -23,29 +26,31 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_parsed = sum(p.posts_parsed_today for p in projects)
         total_posted = sum(p.posts_posted_today for p in projects)
         
-        # Считаем общее количество источников во всех проектах
         total_sources = 0
         for p in projects:
             sources_count = await get_sources_count(p.id)
             total_sources += sources_count
     
-    # Информация о тарифе
     tariff_name = TARIFF_LIMITS.get(user.tariff, {}).get('name', user.tariff)
     
     text = f"📊 <b>Ваша статистика</b>\n\n"
     text += f"💎 <b>Тариф:</b> {tariff_name}\n"
     
-    # Дата окончания
-    if user.subscription_active and user.subscription_ends_at:
-        ends_at = user.subscription_ends_at
-        days_left = (ends_at - datetime.utcnow()).days
-        text += f"📅 Подписка до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
-    elif user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
-        ends_at = user.trial_ends_at
-        days_left = (ends_at - datetime.utcnow()).days
-        text += f"🎁 Триал до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
+    # Для админа показываем особый статус
+    if admin:
+        text += f"👑 <b>Статус:</b> Администратор (без ограничений)\n"
     else:
-        text += f"⚠️ Доступ приостановлен\n"
+        # Для обычных пользователей проверяем подписку/триал
+        if user.subscription_active and user.subscription_ends_at and user.subscription_ends_at > datetime.utcnow():
+            ends_at = user.subscription_ends_at
+            days_left = (ends_at - datetime.utcnow()).days
+            text += f"📅 Подписка до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
+        elif user.trial_ends_at and user.trial_ends_at > datetime.utcnow():
+            ends_at = user.trial_ends_at
+            days_left = (ends_at - datetime.utcnow()).days
+            text += f"🎁 Триал до: {ends_at.strftime('%d.%m.%Y')} ({days_left} дн.)\n"
+        else:
+            text += f"⚠️ Доступ приостановлен\n"
     
     text += f"\n📊 <b>Ваши лимиты:</b>\n"
     text += f"• Макс. проектов: {user.max_projects}\n"
