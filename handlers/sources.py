@@ -271,7 +271,7 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             media_filter=media_filter,
             remove_original_text=remove_text,
             max_video_duration=max_video_duration,
-            max_age_hours=24  # По умолчанию 24 часа
+            max_age_hours=24
         )
         session.add(channel)
         await session.commit()
@@ -295,7 +295,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     await query.edit_message_text("\n".join(text_parts))
     
-    # Спрашиваем про ключевые слова
     keyboard = [
         [InlineKeyboardButton("✅ Добавить ключевые слова", callback_data="add_keywords_yes")],
         [InlineKeyboardButton("⏭️ Пропустить", callback_data="add_keywords_skip")]
@@ -314,7 +313,6 @@ async def remove_text_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def add_keywords_yes_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пользователь хочет добавить ключевые слова."""
     query = update.callback_query
     await query.answer()
     
@@ -330,7 +328,6 @@ async def add_keywords_yes_callback(update: Update, context: ContextTypes.DEFAUL
 
 
 async def add_keywords_skip_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пользователь пропустил добавление ключевых слов."""
     query = update.callback_query
     await query.answer()
     
@@ -340,7 +337,6 @@ async def add_keywords_skip_callback(update: Update, context: ContextTypes.DEFAU
     
     await query.edit_message_text("✅ Источник добавлен! Ключевые слова не указаны.")
     
-    # Очищаем временные данные
     context.user_data.pop('temp_source_id', None)
     context.user_data.pop('temp_source', None)
     context.user_data.pop('temp_project_id', None)
@@ -371,7 +367,6 @@ async def add_keywords_skip_callback(update: Update, context: ContextTypes.DEFAU
 
 
 async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ввода ключевых слов."""
     text = update.message.text.strip()
     source_id = context.user_data.get('temp_source_id')
     project_id = context.user_data.get('temp_project_id')
@@ -394,7 +389,6 @@ async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text(reply)
     
-    # Очищаем временные данные
     context.user_data.pop('temp_source_id', None)
     context.user_data.pop('temp_source', None)
     context.user_data.pop('temp_project_id', None)
@@ -427,7 +421,6 @@ async def process_keywords_input(update: Update, context: ContextTypes.DEFAULT_T
 # ============ РЕДАКТИРОВАНИЕ ИСТОЧНИКА ============
 
 async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню редактирования источника."""
     query = update.callback_query
     await query.answer()
     
@@ -438,7 +431,6 @@ async def edit_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def show_edit_source_menu(query, source_id: int):
-    """Отображает меню редактирования источника."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(SourceChannel).where(SourceChannel.id == source_id))
         source = result.scalar_one_or_none()
@@ -484,6 +476,7 @@ async def show_edit_source_menu(query, source_id: int):
 async def edit_source_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа для ConversationHandler редактирования."""
     query = update.callback_query
+    logger.info(f"🔍 edit_source_start called with data: {query.data}")  # ЛОГ
     await query.answer()
     
     data = query.data
@@ -799,7 +792,6 @@ async def edit_exclude_phrases_input(update: Update, context: ContextTypes.DEFAU
 
 
 async def edit_keywords_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение ключевых слов."""
     text = update.message.text.strip()
     source_id = context.user_data.get('edit_source_id')
     
@@ -930,7 +922,6 @@ async def my_sources(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============ УДАЛЕНИЕ ИСТОЧНИКА С ПОДТВЕРЖДЕНИЕМ ============
 
 async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрашивает подтверждение перед удалением источника."""
     query = update.callback_query
     await query.answer()
     
@@ -955,7 +946,6 @@ async def delete_source_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def confirm_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение удаления источника."""
     query = update.callback_query
     await query.answer()
     
@@ -976,7 +966,6 @@ async def confirm_delete_source_callback(update: Update, context: ContextTypes.D
 
 
 async def cancel_delete_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена удаления источника."""
     query = update.callback_query
     await query.answer()
     
@@ -990,7 +979,6 @@ async def cancel_delete_source_callback(update: Update, context: ContextTypes.DE
 # ============ ВОЗВРАТ К ИСТОЧНИКАМ ============
 
 async def back_to_sources_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат к списку источников."""
     query = update.callback_query
     await query.answer()
     await my_sources(update, context)
